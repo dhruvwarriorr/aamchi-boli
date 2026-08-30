@@ -13,7 +13,7 @@ The intended standard is not “a chatbot that translates Marathi.” The core d
 5. The game adapts its help after failed attempts: light recast → useful phrase chunk → slow guided rebuild.
 6. A fixed, code-owned mission state decides whether a learner may progress.
 7. Gemini TTS speaks Marathi back to the learner.
-8. A Nano Banana completion scene is generated only when the route is earned.
+8. An optional Omni-directed Nano Banana scene variation can be painted from a learner prompt, and a Nano Banana completion scene is generated only when the route is earned.
 
 Do **not** put a Gemini API key in this document, source, git, or chat. The local `.env` has the key and must remain uncommitted.
 
@@ -42,7 +42,8 @@ People moving to Mumbai may know a few Marathi words, but can still freeze durin
 - Gemini detects the specific communicative gap and produces a small teaching intervention.
 - A code-owned escalation ladder controls the amount of support, making the “adaptive teacher” claim demonstrable and safe.
 - Gemini native **Marathi TTS** lets learners hear a natural line and a deliberately slow repeatable chunk.
-- Gemini **Nano Banana** provides the world art and an achievement-based live visual payoff.
+- Gemini **Nano Banana** provides the world art and achievement-based live visual payoff; an Omni director turns a learner's prompt into a constrained scene variation without changing code-owned gameplay geometry.
+- Gemini context caching keeps the fixed route rubric reusable, while a short-lived in-memory cache avoids repainting identical live prompts.
 - Mission progression is guarded by code, so the model cannot invent routes, skip objectives, or rewrite the curriculum.
 
 ---
@@ -59,12 +60,9 @@ People moving to Mumbai may know a few Marathi words, but can still freeze durin
 - Keep the scope polished and credible for a short hackathon build. Do not add a database or broad account system unless explicitly asked.
 - User specifically asked for real game controls after noticing they were missing. The current code now adds WASD/arrows, mobile D-pad, a marker, real proximity gating, and E/Enter talk interaction.
 
-### Two playable perspectives
+### One named learner across all routes
 
-| Character | Context | Learning value |
-| --- | --- | --- |
-| **Aarav** | First-year engineering student who is new to Mumbai | Gains confidence getting to college and asking locals for help. |
-| **Raju** | Bihar-born Mumbai auto-rickshaw driver | Practices clear, respectful Marathi with passengers rather than guessing their destination. |
+The first screen collects a display name. That one learner uses the same student sprite across all three maps; do not reintroduce a character-picker or split-screen profile UI. Raju is now an NPC auto driver in the Bandra route.
 
 This is a language-learning simulation. It must not make legal claims about eligibility, compulsory language compliance, or identity.
 
@@ -79,21 +77,21 @@ This is a language-learning simulation. It must not make legal claims about elig
 
 ## Current gameplay loop
 
-### Phase 1: choose a perspective and route
+### Phase 1: name the learner and choose a route
 
-The lobby shows the two roles on a full-screen Mumbai monsoon backdrop. The player chooses a character, then one of the routes assigned to that character.
+The lobby first asks what the world should call the learner. Its route-picker then shows three prebuilt Nano Banana map-image cards plus one standalone Kahani-style custom-world prompt. The custom world has its own Boli Guide and fixed micro-lesson, so it is never silently linked to a preset.
 
 ### Phase 2: explore
 
-The mission starts on a prebuilt Nano Banana map. A light DOM-based pixel player marker appears over the map.
+The mission starts on a prebuilt Nano Banana map. A full-viewport canvas renders the map, animated Kahani-style sprites, interaction rings, objective pings, and a touch joystick.
 
-- Desktop: **WASD** or **arrow keys** move the marker.
-- Mobile: press-and-hold touch D-pad buttons move the marker.
-- The marker has bounded movement, an NPC target marker, and a real proximity radius.
+- Desktop: **WASD** or **arrow keys** move the animated player.
+- Mobile: a press-and-hold joystick moves the player and the UI recommends landscape orientation on portrait screens.
+- The player has walkable zones, blockers, an NPC target marker, and a real proximity radius.
 - **E / Enter** or the yellow Talk button only works within that radius.
 - Keyboard movement deliberately does not capture keys while an input/textarea/contenteditable has focus.
 
-This is intentionally a lightweight exploration layer above a static AI-generated map—not a full collision/tile engine yet.
+This is intentionally a lightweight collision-aware exploration layer above a static AI-generated map, with code-owned hotspots so live artwork cannot break the route.
 
 ### Phase 3: contextual Marathi conversation
 
@@ -151,7 +149,7 @@ The code also forces support off after success, preventing an answer hint for th
 - The server filters skill evidence to the current step’s skill.
 - Missing/malformed recasts fall back to code-authored mission phrasing.
 
-### Phase 5: outcome and learning evidence
+### Phase 5: interleaved review and learning evidence
 
 Each route has three functional speaking goals. The browser stores no account/profile data.
 
@@ -162,11 +160,13 @@ Per objective, the app records:
 - whether support/hinting was used;
 - independent first-try completion;
 - recovery after guided practice; and
-- mission mastery.
+- voice/typed split, review attempts, later independent recall, and the last concrete error category.
 
-Mastery is 100 for an independent first-try objective clear and 82 for a successful supported/retry clear, averaged across the mission. Only the best route mastery score is retained in `localStorage`. Raw audio is not persisted by the app.
+When a learner misses, the response creates a review item keyed to `missionId + stepIndex`. The learner can practise a short chunk at a later “Memory checkpoint” without blocking the main mission. Review scoring uses the same Gemini endpoint in `mode: "review"`, and a later independent recall is counted separately from the original recovery.
 
-On final success, Nano Banana can generate a learner-specific completion frame. The client has stale-session protection, so a late response from an abandoned route cannot overwrite a newer run.
+The learning drawer shows independent clears, guided recoveries, later recalls, spoken-practice share, and the recurring error focus. Only local mission progress is retained in `localStorage`; raw audio is never persisted.
+
+On final success, Nano Banana can generate a learner-specific completion frame. During play, the live scene prompt uses `/api/aamchi-boli/omni`: Omni writes a compact scene/learning variation and Nano Banana renders it against the fixed mission art direction. The client has stale-session protection, so a late response from an abandoned route cannot overwrite a newer run.
 
 ---
 
@@ -176,7 +176,7 @@ On final success, Nano Banana can generate a learner-specific completion frame. 
 | --- | --- | --- | --- |
 | `kj-college-gate` | Aarav | KJ Somaiya College of Engineering gate, Vidyavihar | State destination; confirm main gate; thank Meera Tai. |
 | `dadar-bus-stop` | Aarav | Dadar Station East | Ask for Shivaji Park bus; repeat landmark; thank Nisha Tai. |
-| `bandra-station-pickup` | Raju | Bandra Station East auto stand | Welcome passenger; ask exact BKC drop-off; confirm a comfortable ride. |
+| `bandra-station-pickup` | Learner meets Raju | Bandra Station East auto stand | Tell Raju BKC; confirm main bus-stop drop-off; thank him. |
 
 The current map prompts use KJ/Vidyavihar visual context. Keep destination wording as-is unless the user asks otherwise, but do not add logos or readable real-world branding to generated artwork.
 
@@ -205,14 +205,15 @@ The active directory may not be a Git repository. Do not assume `git status` wor
 | `app/page.tsx` | Renders Aamchi Boli at the root route. |
 | `app/aamchi-boli/page.tsx` | Dedicated Aamchi Boli route. |
 | `components/AamchiBoli.tsx` | Main state machine, character/mission selection, full-screen UI, movement-to-talk flow, recording, local learning metrics, and feedback rendering. |
-| `components/BoliWorldControls.tsx` | New lightweight WASD/arrow/touch movement layer, player marker, NPC marker, proximity gate, E/Enter interaction. |
+| `components/BoliWorldCanvas.tsx` | Full-screen canvas map, animated sprites, collision-aware movement, map hotspots, proximity gate, WASD/arrows, joystick, and E/Enter interaction. |
 | `lib/boli-config.ts` | The two characters, three missions, exact phrases, map/reaction prompts, and static map paths. |
-| `lib/aamchi-boli.ts` | Gemini scoring prompt/schema, adaptive feedback normalization, progression guard, Nano Banana map/reaction functions, Marathi TTS/slow TTS. |
+| `lib/aamchi-boli.ts` | Gemini scoring/caching, strict objective guard, adaptive review normalization, Omni scene direction, Nano Banana map/reaction functions, and role-aware voice synthesis. |
 | `lib/gemini.ts` | Shared Gemini calls and image handling/retry behavior. |
 | `app/api/aamchi-boli/turn/route.ts` | Public no-auth turn-scoring endpoint. |
 | `app/api/aamchi-boli/voice/route.ts` | Public Gemini TTS endpoint; supports `{ text, slow }`. |
 | `app/api/aamchi-boli/map/route.ts` | Map endpoint. Existing routes normally use static local maps. |
 | `app/api/aamchi-boli/reaction/route.ts` | Earned live Nano Banana reward endpoint. |
+| `app/api/aamchi-boli/omni/route.ts` | Prompt-driven live scene variation endpoint with code-owned mission validation. |
 | `lib/types/client.ts` | Client API shapes including adaptive feedback and per-step learning evidence. |
 | `lib/types/shared.ts` | Mission and character types shared safely by client/server. |
 | `README.md` | Judge-oriented project overview and 90-second demo narrative. |
@@ -223,8 +224,6 @@ The active directory may not be a Git repository. Do not assume `git status` wor
 public/aamchi-boli/maps/kj-college-gate.jpg
 public/aamchi-boli/maps/dadar-bus-stop.jpg
 public/aamchi-boli/maps/bandra-station-pickup.jpg
-public/aamchi-boli/characters/aarav.jpg
-public/aamchi-boli/characters/raju.jpg
 public/aamchi-boli/lobby/mumbai-monsoon-lobby.png
 ```
 
@@ -246,11 +245,13 @@ Defaults in code:
 IMAGE_MODEL=gemini-3.1-flash-image
 BOLI_SCORING_MODEL=gemini-3.5-flash-lite
 GEMINI_TTS_MODEL=gemini-3.1-flash-tts-preview
+BOLI_OMNI_MODEL=gemini-omni-1.1-flash
+SARVAM_TTS_MODEL=bulbul:v3
 ```
 
 ### Image quota behavior
 
-Image generation requires billing/quota on the Gemini project attached to the key. The project previously encountered a Nano Banana zero-quota message, then the user enabled the quota. Avoid changing the static maps; they make mission starts fast and reliable. A live completion frame still requires quota and should gracefully fail without breaking the completed mission.
+Image generation requires billing/quota on the Gemini project attached to the key. The project previously encountered a Nano Banana zero-quota message, then the user enabled the quota. Avoid changing the static maps; they make mission starts fast and reliable. Live Omni variations and completion frames still require image quota and should gracefully fail without breaking learning. The scoring model uses best-effort Gemini explicit caching; Omni's Interactions API has no explicit Cached Content support here, so identical live world prompts use an in-process complete-result cache.
 
 ---
 
@@ -258,7 +259,7 @@ Image generation requires billing/quota on the Gemini project attached to the ke
 
 - [x] Full product concept and problem framing targeted at the judging rubric.
 - [x] Public no-login Aamchi Boli route.
-- [x] Two playable roles: Aarav and Raju.
+- [x] One named learner across all three routes; Raju is the Bandra auto-driver NPC.
 - [x] Three concrete Mumbai Marathi missions.
 - [x] Prebuilt Nano Banana maps and two Nano Banana character portraits.
 - [x] Full-screen Mumbai lobby and full-screen map-first gameplay shell.
@@ -274,7 +275,12 @@ Image generation requires billing/quota on the Gemini project attached to the ke
 - [x] Full support ladder behavior in UI: phrase fragment, map cue, and slow-repeat treatment no longer all reveal the same full target phrase.
 - [x] Stale success feedback is now shown as a clear “Checkpoint cleared” item rather than pretending it evaluates the next objective.
 - [x] High-priority UI fixes: light cards now have dark text, mobile stats drawer has its own Close button, typed submission is disabled while recording, mobile voice buttons are labeled, and route exit is not blocked while the optional completion image is generating.
-- [x] Kahani-style movement layer: WASD/arrows, touch D-pad, NPC target, true proximity requirement, E/Enter/Talk unlock.
+- [x] Kahani-style canvas movement layer: WASD/arrows, animated sprites, collision zones/blockers, touch joystick, NPC target, true proximity requirement, E/Enter/Talk unlock.
+- [x] Prompt-driven live world variation: Omni scene director + Nano Banana renderer, short-lived complete-result cache, scoring-context cache where supported, and stale-session protection.
+- [x] Interleaved review queue with memory checkpoints and separate later-recall metrics.
+- [x] Voice-first interaction polish: WhatsApp-like microphone recording auto-submits after roughly three seconds of silence; manual stop remains available.
+- [x] Strict objective-signal checks prevent vague answers (for example “yes”) from unlocking a destination or confirmation objective.
+- [x] Sarvam voice path for non-Marathi language codes; Gemini native audio remains the Marathi path.
 - [x] README with problem framing, model use, no-auth rationale, setup notes, architecture, asset note, and 90-second demo sequence.
 
 ---
@@ -286,7 +292,7 @@ Run these before making broad changes. Do not overwrite unrelated user edits.
 ```bash
 cd "/Users/arav/Desktop/Mumbai Boli"
 npm run build
-npx eslint components/AamchiBoli.tsx components/BoliWorldControls.tsx lib/aamchi-boli.ts app/api/aamchi-boli/voice/route.ts lib/types/client.ts
+npx eslint components/AamchiBoli.tsx components/BoliWorldCanvas.tsx lib/aamchi-boli.ts app/api/aamchi-boli/voice/route.ts app/api/aamchi-boli/omni/route.ts lib/types/client.ts lib/types/shared.ts
 npm run dev
 ```
 
@@ -294,12 +300,14 @@ Then manually check:
 
 1. Lobby shows character **names and descriptions** in dark readable text on light cards.
 2. Select Aarav → First Ride to KJ Somaiya.
-3. Press WASD/arrows; the player marker moves over the map.
+3. Press WASD/arrows; the animated player moves over the canvas map and stops at collision boundaries.
 4. Approach NPC target; the Talk control only becomes active inside the proximity radius.
 5. Press E / Enter; the dialogue and voice/text response controls open.
 6. Make one weak answer, then repeat it. Confirm feedback escalates from a recast to a slow guided chunk.
 7. Make a correct Marathi answer. Confirm exactly one objective advances.
 8. On phone width, confirm the bottom controls remain reachable and the Learning drawer can be closed.
+9. Create an original safe world and confirm its full creation screen stays visible until the Omni/Nano Banana map has arrived.
+10. Miss an objective with a vague answer such as “yes”; confirm the route stays on the same step and the response names one concrete missing detail.
 
 ### Live endpoint smoke tests already performed
 
@@ -316,24 +324,18 @@ These were tested against the locally configured Gemini key during the previous 
 
 ### P0 — finish / verify before demo
 
-1. **Do the browser QA checklist above after the latest movement and adaptive UI changes.**
-   - The code should compile, but visual movement/proximity must be confirmed in the actual app.
-2. Make sure the player marker and NPC target feel correctly placed on all three maps.
-   - Current positions live in `NPC_WORLD_POSITIONS` in `components/AamchiBoli.tsx` and are approximate percentages.
-   - Adjust per map only after visual inspection; do not turn this into a large map-engine task.
-3. Verify microphone permission and a real spoken response from the browser.
-4. Record a clean 90-second demo while image quota is available.
+1. **Run the browser QA checklist above after the latest movement and adaptive UI changes.**
+2. Verify microphone permission and a real spoken response from the browser.
+3. Record a clean 90-second demo while image quota is available.
 
 ### P1 — valuable polish if time remains
 
-1. Add subtle map collision zones or walkable-path constraints. The current movement layer is intentionally bounded but not collision-aware.
-2. Give each NPC an explicit map coordinate in `lib/boli-config.ts` instead of the temporary component-local mapping.
-3. Add a compact “Why this was accepted” success explanation using the existing `adaptiveFeedback.whatWorked` field.
-4. Improve audio coaching without evaluating accent:
+1. Add a compact “Why this was accepted” success explanation using the existing `adaptiveFeedback.whatWorked` field.
+2. Improve audio coaching without evaluating accent:
    - add `speechClarity: clear | repeat_key_chunk | audio_unclear` to the Gemini schema;
    - only say whether the key word / intent was audibly captured, never rate pronunciation/accent.
-5. Add a tiny map ping/highlight for the `visual_hint` scaffold. Right now it deliberately gives a contextual map cue but does not animate a landmark.
-6. Add a short end-of-route summary of the phrase chunks learned.
+3. Add a tiny map ping/highlight for the `visual_hint` scaffold. Right now it deliberately gives a contextual map cue but does not animate a landmark.
+4. Add a short end-of-route summary of the phrase chunks learned.
 
 ### P2 — do not prioritize for this hackathon
 
@@ -346,11 +348,11 @@ These were tested against the locally configured Gemini key during the previous 
 
 ## Known limitations / deliberate tradeoffs
 
-- The map movement is an overlay, not a genuine collision/tile engine. This is intentional to preserve the strong prebuilt Nano Banana world art and ship within a hackathon timeline.
-- NPC target coordinates are approximate visual coordinates for each static map.
+- The map movement is a lightweight canvas engine over static AI art, not a tiled camera/world editor. Walkable zones and blockers are explicit mission metadata, so visual variations cannot change gameplay geometry.
+- NPC and landmark coordinates are deliberate percentage-based hotspots in `lib/boli-config.ts`, tuned for the three static maps.
 - The map only gates the *start* of a conversation. Once dialogue begins, the learner does not walk between individual language steps.
 - Retry count comes from the client but is clamped server-side. Because this is a no-auth game, it is designed for learning feedback rather than adversarial score integrity.
-- Current response scoring is model-based. The code guard prevents malformed success from advancing without the current skill evidence, but it is not a formal language-testing engine.
+- Current response scoring is model-based with a deterministic objective-signal guard. It is a practical communication coach, not a formal language-testing engine.
 - No raw audio persistence is intentional.
 - Live completion image generation depends on Gemini image quota; completion must still be meaningful if that final image fails.
 - The dev app may show an inherited PostHog “initialized without a token” console message. It is not caused by Aamchi Boli and does not affect game behavior; do not spend hackathon time on it unless asked.
@@ -418,28 +420,14 @@ adaptiveFeedback: {
 `POST /api/aamchi-boli/voice` accepts:
 
 ```json
-{ "text": "...", "slow": true }
+{ "text": "...", "role": "auto driver", "language": "mr-IN", "slow": true }
 ```
 
-The server uses Gemini TTS with `mr-IN` and converts PCM16 output to a browser-playable WAV data URL. The browser speech API is fallback only.
+The server uses Gemini TTS with `mr-IN` and converts PCM16 output to a browser-playable WAV data URL. For other language codes it uses Sarvam when `SARVAM_API_KEY` is available. The browser speech API is fallback only.
 
 ### The exploration API
 
-`components/BoliWorldControls.tsx` exports:
-
-```ts
-<BoliWorldControls
-  characterName="Aarav"
-  npcName="Meera Tai"
-  enabled={true}
-  canInteract={true}
-  npcPosition={{ x: 62, y: 63 }}
-  onProximityChange={(near) => { /* update parent UI */ }}
-  onInteract={() => { /* unlock dialogue */ }}
-/>
-```
-
-It owns movement and performs its own radius-based near-NPC check. The parent owns the high-level route state and unlocks dialogue in `onInteract`.
+`components/BoliWorldCanvas.tsx` owns the animation loop, map rendering, player pose, keyboard lifecycle, touch joystick, collision checks, hotspot proximity, and E/Enter interaction. The parent owns the high-level route state and unlocks dialogue in `onInteract`. `components/BoliWorldControls.tsx` is an unused predecessor and should not be reintroduced into the Aamchi route.
 
 ---
 

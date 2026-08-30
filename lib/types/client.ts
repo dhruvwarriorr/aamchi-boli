@@ -8,7 +8,7 @@
 import type { Choice, Effects, EndingKind, Stats } from "../stats";
 import type { DialogueTurn, GameBible, SceneData } from "../universe";
 import type { Premise } from "./shared";
-import type { BoliCharacterId, BoliInputMode, BoliMission, BoliSkillId } from "./shared";
+import type { BoliInputMode, BoliMission, BoliSkillId } from "./shared";
 
 /** Premise card / world metadata shown in the UI. */
 export type { Premise } from "./shared";
@@ -170,22 +170,16 @@ export type WorldDialogueState = {
 /* Aamchi Boli client ↔ API shapes                                     */
 /* ------------------------------------------------------------------ */
 
-/** Character card displayed before a learner begins a mission. */
-export type BoliCharacterCard = {
-  id: BoliCharacterId;
-  name: string;
-  role: string;
-  hometown: string;
-  description: string;
-  /** Optional prebuilt Nano Banana portrait for the route picker. */
-  portraitAssetPath?: string;
-  available: boolean;
-};
-
 /** A browser turn sent to Gemini as speech or a typed accessibility fallback. */
 export type BoliTurnRequest = {
   missionId: string;
   stepIndex: number;
+  /** Learner's preferred language for Gemini's concise coaching text. */
+  supportLanguage?: "English" | "Hindi" | "Gujarati" | "Tamil" | "Telugu";
+  /** Mission scoring or a non-blocking memory checkpoint. */
+  mode?: "mission" | "review";
+  /** Code-created review id; the server resolves the phrase from the mission. */
+  reviewItemId?: string;
   /** Number of completed attempts on this exact objective before this submission. */
   attemptsForStep?: number;
   typedResponse?: string;
@@ -194,6 +188,28 @@ export type BoliTurnRequest = {
 };
 
 export type BoliTurnOutcome = "success" | "partial" | "repair_needed" | "hint_needed";
+
+export type BoliErrorCode =
+  | "missing_intent"
+  | "missing_detail"
+  | "unclear_audio"
+  | "politeness"
+  | "wording"
+  | "mixed_language";
+
+export type BoliReviewItem = {
+  id: string;
+  sourceStepIndex: number;
+  skill: BoliSkillId;
+  phrase: {
+    marathi: string;
+    transliteration: string;
+    meaning: string;
+  };
+  errorCode?: BoliErrorCode;
+  attempts: number;
+  completed: boolean;
+};
 
 export type BoliSupportRecommendation = "none" | "visual_hint" | "phrase_fragment" | "slow_repeat";
 
@@ -229,6 +245,8 @@ export type BoliTurnResponse = {
   skillEvidence: BoliSkillId[];
   supportRecommendation: BoliSupportRecommendation;
   adaptiveFeedback: BoliAdaptiveFeedback;
+  feedbackFocus: { code: BoliErrorCode; label: string };
+  reviewItem?: BoliReviewItem;
   nextStep: number;
   completed: boolean;
   reactionPrompt?: string;
@@ -243,6 +261,9 @@ export type BoliSkillProgress = {
   hintUsed: boolean;
   voiceAttempts: number;
   typedAttempts: number;
+  reviewAttempted: number;
+  reviewRecalled: number;
+  lastErrorCode?: BoliErrorCode;
 };
 
 /** Browser-only learning state, keyed by mission step rather than generic skill. */
@@ -255,6 +276,18 @@ export type BoliMapResponse = {
   fallback: boolean;
   /** Distinguishes a stored Nano Banana map from an on-demand generation. */
   source: "prebuilt" | "generated";
+};
+
+/** Prompt-driven, cached visual scene generated during a live route. */
+export type BoliOmniWorldResponse = {
+  missionId: string;
+  prompt: string;
+  /** One short, judge-friendly teaching cue returned by the scene director. */
+  learningMoment?: string;
+  image: string;
+  cacheHit: boolean;
+  model: string;
+  fallback: boolean;
 };
 
 /** Audio response from the Gemini Marathi TTS endpoint. */

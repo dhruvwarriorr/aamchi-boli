@@ -40,6 +40,8 @@ export const LEGACY_GEMINI_VOICE_MAP: Record<string, string> = {
 export type SarvamSpeechOpts = {
   pace?: number;
   temperature?: number;
+  /** Sarvam ISO language code, e.g. en-IN, hi-IN, ta-IN. */
+  languageCode?: string;
 };
 
 type SarvamTtsResponse = {
@@ -88,7 +90,7 @@ export async function synthesizeSarvamSpeech(
         body: JSON.stringify({
           text,
           model: DEFAULT_MODEL,
-          target_language_code: DEFAULT_LANGUAGE,
+          target_language_code: opts?.languageCode || DEFAULT_LANGUAGE,
           speaker: resolved,
           pace,
           temperature,

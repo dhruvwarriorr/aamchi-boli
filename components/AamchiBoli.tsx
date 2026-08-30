@@ -1,22 +1,33 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, ChevronLeft, CircleHelp, Lock, MapPin, Mic, Send, Sparkles, Volume2 } from "lucide-react";
-import { BOLI_CHARACTERS, BOLI_MISSIONS } from "@/lib/boli-config";
+import { useEffect, useRef, useState } from "react";
+import { CheckCircle2, ChevronLeft, CircleHelp, MapPin, Mic, Send, Sparkles, Volume2 } from "lucide-react";
+import { BOLI_MISSIONS, BOLI_OPEN_WORLD_MISSION } from "@/lib/boli-config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { BoliWorldControls } from "@/components/BoliWorldControls";
+import { Textarea } from "@/components/ui/textarea";
+import { BoliWorldCanvas } from "@/components/BoliWorldCanvas";
 import type {
   BoliLearningState,
   BoliMapResponse,
+  BoliOmniWorldResponse,
+  BoliReviewItem,
   BoliReactionResponse,
   BoliTurnResponse,
   BoliVoiceResponse,
 } from "@/lib/types/client";
-import type { BoliCharacterId, BoliInputMode, BoliMission } from "@/lib/types/shared";
+import type { BoliInputMode, BoliMission } from "@/lib/types/shared";
 
-type View = "choose-character" | "choose-mission" | "mission";
+type View = "welcome" | "choose-mission" | "mission";
+
+const SUPPORT_LANGUAGES = [
+  { label: "English", code: "English" },
+  { label: "Hindi", code: "Hindi" },
+  { label: "Gujarati", code: "Gujarati" },
+  { label: "Tamil", code: "Tamil" },
+  { label: "Telugu", code: "Telugu" },
+] as const;
 
 function stepLearningKey(stepIndex: number): string {
   return `step:${stepIndex}`;
@@ -31,6 +42,8 @@ function emptyStepProgress() {
     hintUsed: false,
     voiceAttempts: 0,
     typedAttempts: 0,
+    reviewAttempted: 0,
+    reviewRecalled: 0,
   };
 }
 
@@ -39,19 +52,6 @@ function freshLearningState(mission?: BoliMission | null): BoliLearningState {
   return Object.fromEntries(
     (mission?.steps ?? []).map((_, index) => [stepLearningKey(index), emptyStepProgress()])
   ) as BoliLearningState;
-}
-
-function supportCopy(support: BoliTurnResponse["supportRecommendation"]): string {
-  switch (support) {
-    case "visual_hint":
-      return "Gemini opened a visual route cue for the key place.";
-    case "phrase_fragment":
-      return "Gemini unlocked a phrase fragment for your next attempt.";
-    case "slow_repeat":
-      return "Gemini recommends hearing the line slowly before trying again.";
-    default:
-      return "No support needed — your practical intent was clear.";
-  }
 }
 
 /** Read the best locally retained score for one mission without requiring an account. */
@@ -77,6 +77,28 @@ function persistMastery(missionId: string, value: number): void {
   }
 }
 
+function storedLearning(mission: BoliMission): BoliLearningState {
+  try {
+    const raw = window.localStorage.getItem(`aamchi-boli:${mission.id}:learning-v2`);
+    if (!raw) return freshLearningState(mission);
+    const parsed = JSON.parse(raw) as BoliLearningState;
+    return Object.fromEntries(mission.steps.map((_, index) => {
+      const item = parsed?.[stepLearningKey(index)];
+      return [stepLearningKey(index), item ? { ...emptyStepProgress(), ...item } : emptyStepProgress()];
+    })) as BoliLearningState;
+  } catch {
+    return freshLearningState(mission);
+  }
+}
+
+function persistLearning(missionId: string, learning: BoliLearningState): void {
+  try {
+    window.localStorage.setItem(`aamchi-boli:${missionId}:learning-v2`, JSON.stringify(learning));
+  } catch {
+    // Local storage is an enhancement; a blocked write never interrupts play.
+  }
+}
+
 /** Derive learner-facing evidence from code-owned mission goals and scored attempts. */
 function summarizeLearning(mission: BoliMission | null, learning: BoliLearningState) {
   const progress = mission?.steps.map((_, index) => learning[stepLearningKey(index)] ?? emptyStepProgress()) ?? [];
@@ -87,13 +109,20 @@ function summarizeLearning(mission: BoliMission | null, learning: BoliLearningSt
   const totalAttempts = progress.reduce((total, item) => total + item.attempts, 0);
   const voiceAttempts = progress.reduce((total, item) => total + item.voiceAttempts, 0);
   const typedAttempts = progress.reduce((total, item) => total + item.typedAttempts, 0);
+  const reviewAttempted = progress.reduce((total, item) => total + item.reviewAttempted, 0);
+  const reviewRecalled = progress.reduce((total, item) => total + item.reviewRecalled, 0);
+  const focusCounts = progress.reduce<Record<string, number>>((counts, item) => {
+    if (item.lastErrorCode) counts[item.lastErrorCode] = (counts[item.lastErrorCode] ?? 0) + 1;
+    return counts;
+  }, {});
+  const recurringFocus = Object.entries(focusCounts).sort(([, a], [, b]) => b - a)[0]?.[0] ?? null;
   const mastery = progress.length
     ? Math.round(
         progress.reduce((total, item) => total + (item.cleared ? (item.firstTry ? 100 : 82) : 0), 0) /
           progress.length
       )
     : 0;
-  return { cleared, firstTryWins, repairsResolved, hintsUsed, totalAttempts, voiceAttempts, typedAttempts, mastery };
+  return { cleared, firstTryWins, repairsResolved, hintsUsed, totalAttempts, voiceAttempts, typedAttempts, reviewAttempted, reviewRecalled, recurringFocus, mastery };
 }
 
 /** Convert a short browser recording into the base64 payload accepted by Gemini. */
@@ -123,12 +152,15 @@ function speakFallback(text: string) {
 
 /** Play a Gemini-scored Marathi mission chosen from the local route catalogue. */
 export function AamchiBoli() {
-  const [view, setView] = useState<View>("choose-character");
-  const [selectedCharacterId, setSelectedCharacterId] = useState<BoliCharacterId | null>(
-    () => BOLI_CHARACTERS.find((character) => character.available)?.id ?? null
-  );
+  const [view, setView] = useState<View>("welcome");
+  const [nameInput, setNameInput] = useState("");
+  const [playerName, setPlayerName] = useState("Learner");
+  const [supportLanguage, setSupportLanguage] = useState<(typeof SUPPORT_LANGUAGES)[number]["code"]>("English");
   const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
   const [map, setMap] = useState<BoliMapResponse | null>(null);
+  const [liveWorld, setLiveWorld] = useState<BoliOmniWorldResponse | null>(null);
+  const [openingPrompt, setOpeningPrompt] = useState("");
+  const [generatingWorld, setGeneratingWorld] = useState(false);
   const [reaction, setReaction] = useState<BoliReactionResponse | null>(null);
   const [reactionNote, setReactionNote] = useState<string | null>(null);
   const [loadingMap, setLoadingMap] = useState(false);
@@ -144,12 +176,16 @@ export function AamchiBoli() {
   const [showLearningPanel, setShowLearningPanel] = useState(false);
   const [conversationUnlocked, setConversationUnlocked] = useState(false);
   const [npcInRange, setNpcInRange] = useState(false);
+  const [reviewQueue, setReviewQueue] = useState<BoliReviewItem[]>([]);
+  const [reviewingItemId, setReviewingItemId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [learning, setLearning] = useState<BoliLearningState>(() => freshLearningState());
   const learningRef = useRef<BoliLearningState>(learning);
   const [bestMastery, setBestMastery] = useState<number | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const silenceRafRef = useRef<number | null>(null);
   const acquiringMicRef = useRef(false);
   const submittingRef = useRef(false);
   const hintUsedByStepRef = useRef<Record<string, boolean>>({});
@@ -160,6 +196,7 @@ export function AamchiBoli() {
   const commitLearning = (next: BoliLearningState) => {
     learningRef.current = next;
     setLearning(next);
+    if (mission) persistLearning(mission.id, next);
   };
 
   useEffect(() => {
@@ -171,6 +208,9 @@ export function AamchiBoli() {
         // A recorder already torn down by the browser is fine to ignore.
       }
       streamRef.current?.getTracks().forEach((track) => track.stop());
+      if (silenceRafRef.current !== null) cancelAnimationFrame(silenceRafRef.current);
+      void audioContextRef.current?.close();
+      audioContextRef.current = null;
       streamRef.current = null;
       recorderRef.current = null;
       if (typeof window !== "undefined" && "speechSynthesis" in window) {
@@ -179,29 +219,43 @@ export function AamchiBoli() {
     };
   }, []);
 
-  const selectedCharacter = useMemo(
-    () => BOLI_CHARACTERS.find((character) => character.id === selectedCharacterId) ?? null,
-    [selectedCharacterId]
-  );
-  const characterMissions = useMemo(
-    () =>
-      selectedCharacter
-        ? BOLI_MISSIONS.filter((candidate) => candidate.characterId === selectedCharacter.id)
-        : [],
-    [selectedCharacter]
-  );
-  const mission = useMemo(
-    () => characterMissions.find((candidate) => candidate.id === selectedMissionId) ?? null,
-    [characterMissions, selectedMissionId]
-  );
+  const mission = [...BOLI_MISSIONS, BOLI_OPEN_WORLD_MISSION].find((candidate) => candidate.id === selectedMissionId) ?? null;
   const completed = Boolean(mission && stepIndex >= mission.steps.length);
   const step = mission?.steps[Math.min(stepIndex, Math.max(mission.steps.length - 1, 0))] ?? null;
   const questProgress = mission?.steps.length ? Math.round((stepIndex / mission.steps.length) * 100) : 0;
-  const learningSummary = useMemo(() => summarizeLearning(mission, learning), [learning, mission]);
-  const activeTurn = turn && turnStepIndex === stepIndex ? turn : null;
+  const learningSummary = summarizeLearning(mission, learning);
+  const activeReview = reviewQueue.find((item) => item.id === reviewingItemId) ?? null;
+  const conversationStep = activeReview && mission ? mission.steps[activeReview.sourceStepIndex] : step;
+  const activeTurn = turn && turnStepIndex !== null && (turnStepIndex === stepIndex || turnStepIndex === activeReview?.sourceStepIndex) ? turn : null;
   const recentlyClearedTurn = turn && turnStepIndex !== null && turnStepIndex < stepIndex ? turn : null;
 
-  const beginMission = async (missionToStart: BoliMission) => {
+  const generateLiveWorldFor = async (missionToGenerate: BoliMission, prompt: string, sessionId: number) => {
+    const cleanPrompt = prompt.trim();
+    if (!cleanPrompt) return;
+    setGeneratingWorld(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/aamchi-boli/omni", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ missionId: missionToGenerate.id, prompt: cleanPrompt }),
+      });
+      const data = (await response.json()) as BoliOmniWorldResponse & { error?: string };
+      if (!response.ok) throw new Error(data.error || "The live world variation could not be rendered.");
+      if (sessionId === missionSessionRef.current) {
+        setLiveWorld(data);
+      }
+    } catch (cause) {
+      if (sessionId === missionSessionRef.current) setError(cause instanceof Error ? cause.message : "The live world variation could not be rendered.");
+    } finally {
+      if (sessionId === missionSessionRef.current) {
+        setGeneratingWorld(false);
+        if (missionToGenerate.id === BOLI_OPEN_WORLD_MISSION.id) setLoadingMap(false);
+      }
+    }
+  };
+
+  const beginMission = async (missionToStart: BoliMission, livePrompt?: string) => {
     if (!missionToStart.steps.length) {
       setError("This route does not have any conversation turns yet.");
       return;
@@ -212,6 +266,7 @@ export function AamchiBoli() {
     setView("mission");
     setLoadingMap(true);
     setMap(null);
+    setLiveWorld(null);
     setReaction(null);
     setLoadingReaction(false);
     setStepIndex(0);
@@ -223,9 +278,20 @@ export function AamchiBoli() {
     hintUsedByStepRef.current = {};
     setConversationUnlocked(false);
     setNpcInRange(false);
-    setLearning(freshLearningState(missionToStart));
+    setReviewQueue([]);
+    setReviewingItemId(null);
+    setOpeningPrompt("");
+    const savedLearning = storedLearning(missionToStart);
+    learningRef.current = savedLearning;
+    setLearning(savedLearning);
     setBestMastery(storedMastery(missionToStart.id));
     setError(null);
+    // A custom build is its own world: paint it directly, never generate a
+    // hidden preset map first or attach it to a Mumbai route.
+    if (livePrompt?.trim()) {
+      void generateLiveWorldFor(missionToStart, livePrompt, missionSessionRef.current);
+      return;
+    }
     if (missionToStart.mapAssetPath) {
       setMap({
         mission: missionToStart,
@@ -244,7 +310,9 @@ export function AamchiBoli() {
       });
       const data = (await response.json()) as BoliMapResponse & { error?: string };
       if (!response.ok) throw new Error(data.error || "The map could not be generated.");
-      if (requestId === mapRequestRef.current) setMap(data);
+      if (requestId === mapRequestRef.current) {
+        setMap(data);
+      }
     } catch (cause) {
       if (requestId === mapRequestRef.current) {
         setError(cause instanceof Error ? cause.message : "The map could not be generated.");
@@ -253,6 +321,7 @@ export function AamchiBoli() {
       if (requestId === mapRequestRef.current) setLoadingMap(false);
     }
   };
+
 
   const applyTurn = (
     response: BoliTurnResponse,
@@ -263,7 +332,8 @@ export function AamchiBoli() {
     setTurn(response);
     setTurnStepIndex(attemptedStepIndex);
     setShowHint(response.outcome !== "success" && response.supportRecommendation !== "none");
-    setStepIndex(Math.min(Math.max(response.nextStep, 0), mission.steps.length));
+    const isReview = Boolean(reviewingItemId);
+    if (!isReview) setStepIndex(Math.min(Math.max(response.nextStep, 0), mission.steps.length));
     const progressKey = stepLearningKey(attemptedStepIndex);
     const current = learningRef.current;
     const prior = current[progressKey] ?? emptyStepProgress();
@@ -276,16 +346,34 @@ export function AamchiBoli() {
     const nextLearning: BoliLearningState = {
       ...current,
       [progressKey]: {
-        attempts,
+        attempts: isReview ? prior.attempts : attempts,
         cleared: prior.cleared || clearedNow,
-        firstTry: prior.firstTry || (clearedNow && prior.attempts === 0 && !supportWasUsed),
-        recoveredAfterRepair: prior.recoveredAfterRepair || (clearedNow && (prior.attempts > 0 || supportWasUsed)),
+        firstTry: prior.firstTry || (!isReview && clearedNow && prior.attempts === 0 && !supportWasUsed),
+        recoveredAfterRepair: prior.recoveredAfterRepair || (!isReview && clearedNow && (prior.attempts > 0 || supportWasUsed)),
         hintUsed: supportWasUsed,
         voiceAttempts: prior.voiceAttempts + (inputMode === "voice" ? 1 : 0),
         typedAttempts: prior.typedAttempts + (inputMode === "typed" ? 1 : 0),
+        reviewAttempted: prior.reviewAttempted + (isReview ? 1 : 0),
+        reviewRecalled: prior.reviewRecalled + (isReview && clearedNow ? 1 : 0),
+        // A success should preserve the earlier repair signal instead of
+        // inventing a new “error” from the model's optional success payload.
+        lastErrorCode: clearedNow ? prior.lastErrorCode : response.feedbackFocus?.code,
       },
     };
     commitLearning(nextLearning);
+    if (response.reviewItem) {
+      const reviewItem = response.reviewItem;
+      setReviewQueue((queue) => {
+        const existing = queue.find((item) => item.id === reviewItem.id);
+        if (reviewItem.completed) return queue.filter((item) => item.id !== reviewItem.id);
+        if (existing) return queue.map((item) => item.id === reviewItem.id ? { ...item, attempts: reviewItem.attempts, errorCode: reviewItem.errorCode } : item);
+        return [...queue, reviewItem];
+      });
+    }
+    if (isReview) {
+      if (clearedNow) setReviewingItemId(null);
+      return;
+    }
     const summary = summarizeLearning(mission, nextLearning);
     if (response.completed) {
       const mastery = summary.mastery;
@@ -334,10 +422,11 @@ export function AamchiBoli() {
   };
 
   const submitTurn = async (payload: { typedResponse?: string; audioBase64?: string; audioMimeType?: string }) => {
-    if (submittingRef.current || thinking || completed || !conversationUnlocked || !mission || !step) return;
+    if (submittingRef.current || thinking || completed || !conversationUnlocked || !mission || !conversationStep) return;
     submittingRef.current = true;
     const sessionId = missionSessionRef.current;
-    const attemptedStepIndex = stepIndex;
+    const isReview = Boolean(activeReview);
+    const attemptedStepIndex = isReview ? activeReview!.sourceStepIndex : stepIndex;
     const attemptsForStep = learningRef.current[stepLearningKey(attemptedStepIndex)]?.attempts ?? 0;
     const inputMode: BoliInputMode = payload.audioBase64 ? "voice" : "typed";
     setThinking(true);
@@ -346,7 +435,7 @@ export function AamchiBoli() {
       const response = await fetch("/api/aamchi-boli/turn", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ missionId: mission.id, stepIndex: attemptedStepIndex, attemptsForStep, ...payload }),
+        body: JSON.stringify({ missionId: mission.id, stepIndex: attemptedStepIndex, attemptsForStep, mode: isReview ? "review" : "mission", reviewItemId: activeReview?.id, supportLanguage, ...payload }),
       });
       const data = (await response.json()) as BoliTurnResponse & { error?: string };
       if (!response.ok) throw new Error(data.error || "Gemini could not score that turn.");
@@ -392,6 +481,10 @@ export function AamchiBoli() {
         if (event.data.size > 0) chunks.push(event.data);
       };
       recorder.onstop = () => {
+        if (silenceRafRef.current !== null) cancelAnimationFrame(silenceRafRef.current);
+        silenceRafRef.current = null;
+        void audioContextRef.current?.close();
+        audioContextRef.current = null;
         stream.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
         recorderRef.current = null;
@@ -413,6 +506,42 @@ export function AamchiBoli() {
         })();
       };
       recorder.start();
+      // WhatsApp-like resilience: stop after roughly three seconds of actual
+      // silence, while still allowing a manual stop at any time.
+      try {
+        const AudioContextCtor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (AudioContextCtor) {
+          const audioContext = new AudioContextCtor();
+          const analyser = audioContext.createAnalyser();
+          analyser.fftSize = 512;
+          audioContext.createMediaStreamSource(stream).connect(analyser);
+          const samples = new Uint8Array(analyser.fftSize);
+          let activeTicks = 0;
+          let silentTicks = 0;
+          const monitor = () => {
+            activeTicks += 1;
+            analyser.getByteTimeDomainData(samples);
+            let energy = 0;
+            for (const sample of samples) {
+              const normalized = (sample - 128) / 128;
+              energy += normalized * normalized;
+            }
+            const rms = Math.sqrt(energy / samples.length);
+            if (rms > 0.035) silentTicks = 0;
+            else silentTicks += 1;
+            // requestAnimationFrame is roughly 60 Hz: 180 quiet frames ≈ 3s.
+            if (recorderRef.current?.state === "recording" && activeTicks > 55 && silentTicks > 180) {
+              recorderRef.current.stop();
+              return;
+            }
+            silenceRafRef.current = requestAnimationFrame(monitor);
+          };
+          audioContextRef.current = audioContext;
+          silenceRafRef.current = requestAnimationFrame(monitor);
+        }
+      } catch {
+        // Audio analysis is optional; MediaRecorder still works normally.
+      }
       setRecording(true);
     } catch {
       // Permission succeeded but the recorder did not start; release the mic
@@ -438,7 +567,7 @@ export function AamchiBoli() {
       const response = await fetch("/api/aamchi-boli/voice", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, slow }),
+        body: JSON.stringify({ text, slow, role: mission?.npcRole }),
       });
       const data = (await response.json()) as BoliVoiceResponse;
       if (data.audio) {
@@ -470,21 +599,21 @@ export function AamchiBoli() {
     setTurn(null);
     setTurnStepIndex(null);
     setReaction(null);
+    setLiveWorld(null);
     setLoadingReaction(false);
     setTypedResponse("");
     setShowHint(false);
     setConversationUnlocked(false);
     setNpcInRange(false);
+    setReviewQueue([]);
+    setReviewingItemId(null);
     setError(null);
     commitLearning(freshLearningState(mission));
     if (!preserveMap) setMap(null);
   };
 
-  const chooseCharacter = (characterId: BoliCharacterId) => {
-    const character = BOLI_CHARACTERS.find((candidate) => candidate.id === characterId);
-    if (!character?.available) return;
+  const openRoutePicker = () => {
     mapRequestRef.current += 1;
-    setSelectedCharacterId(characterId);
     setSelectedMissionId(null);
     setLoadingMap(false);
     resetMission(false);
@@ -498,11 +627,11 @@ export function AamchiBoli() {
     resetMission(false);
     setSelectedMissionId(null);
     setBestMastery(null);
-    setView(selectedCharacter ? "choose-mission" : "choose-character");
+    setView("choose-mission");
   };
 
   const togglePhraseHelp = () => {
-    const key = stepLearningKey(stepIndex);
+    const key = stepLearningKey(activeReview?.sourceStepIndex ?? stepIndex);
     setShowHint((visible) => {
       const nextVisible = !visible;
       if (nextVisible) hintUsedByStepRef.current = { ...hintUsedByStepRef.current, [key]: true };
@@ -510,81 +639,55 @@ export function AamchiBoli() {
     });
   };
 
-  if (view === "choose-character") {
+  if (view === "welcome") {
     return (
       <main className="relative min-h-dvh overflow-hidden bg-[#15110e] text-white">
         <Image
           src="/aamchi-boli/lobby/mumbai-monsoon-lobby.png"
-          alt="A pixel-art Mumbai monsoon evening"
+          alt="A pixel-art language-learning game world"
           fill
           priority
           sizes="100vw"
           className="object-cover"
         />
         <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(12,9,7,.88),rgba(12,9,7,.54)_52%,rgba(12,9,7,.76)),linear-gradient(0deg,rgba(12,9,7,.88),transparent_58%)]" />
-        <div className="relative z-10 mx-auto flex min-h-dvh max-w-6xl flex-col px-5 py-8 sm:px-8">
-        <header className="mb-10 flex items-start justify-between gap-6 border-b-2 border-[#fff6dd]/45 pb-6">
-          <div>
-            <p className="mb-2 text-xs font-bold uppercase tracking-[0.22em] text-main">Mumbai speaks back</p>
+        <div className="relative z-10 mx-auto flex min-h-dvh max-w-5xl flex-col justify-center px-5 py-8 sm:px-8">
+          <header className="mb-8 border-b-2 border-[#fff6dd]/45 pb-6">
+            <p className="mb-2 text-xs font-bold uppercase tracking-[0.22em] text-main">Language comes alive</p>
             <h1 className="font-display text-5xl font-extrabold tracking-tight sm:text-7xl">Aamchi Boli</h1>
-            <p className="mt-3 max-w-xl text-lg font-semibold text-[#fff6dd]/82">
-              Learn Marathi by completing a real Mumbai conversation, not by tapping flashcards.
-            </p>
-          </div>
-          <div className="hidden rounded-base border-2 border-border bg-main px-4 py-3 text-right text-xs font-bold uppercase tracking-wide text-black sm:block">
-            <p>{BOLI_CHARACTERS.filter((character) => character.available).length} learning role{BOLI_CHARACTERS.filter((character) => character.available).length === 1 ? "" : "s"}</p>
-            <p className="mt-1 text-foreground/70">Choose a point of view</p>
-          </div>
-        </header>
+            <p className="mt-3 max-w-2xl text-lg font-semibold text-[#fff6dd]/82">Walk through ready-made stories or invent a new world, then learn Marathi by speaking—not flashcards.</p>
+          </header>
 
-        <section>
-          <p className="mb-4 text-xs font-bold uppercase tracking-[0.18em] text-inksoft">Choose your point of view</p>
-          <div className="grid gap-5 md:grid-cols-2">
-            {BOLI_CHARACTERS.map((character) => (
-              <article
-                key={character.id}
-                aria-current={selectedCharacterId === character.id ? "true" : undefined}
-                className={`relative overflow-hidden rounded-base border-2 border-border p-6 text-black shadow-shadow transition-transform ${
-                  character.available ? "bg-secondary-background" : "bg-secondary-background/55 opacity-75"
-                }`}
-              >
-                {!character.available && <Lock className="absolute right-5 top-5 size-5 text-inksoft" />}
-                {character.portraitAssetPath && (
-                  <div className="relative mb-6 aspect-[16/10] overflow-hidden rounded-base border-2 border-border bg-[#ffd3ca] shadow-shadow">
-                    <Image
-                      src={character.portraitAssetPath}
-                      alt={`Portrait of ${character.name}, ${character.role}`}
-                      fill
-                      sizes="(min-width: 768px) 50vw, 100vw"
-                      className="object-cover object-center"
-                      priority={character.available}
-                    />
-                    <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-transparent" />
-                    <p className="absolute bottom-3 left-3 rounded-base border-2 border-black bg-[#fff6dd] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-black shadow-shadow">
-                      {character.available ? "Playable role" : "Coming next"}
-                    </p>
-                  </div>
-                )}
-                <p className="text-xs font-bold uppercase tracking-[0.16em] text-main">{character.hometown}</p>
-                <h2 className="mt-2 font-display text-4xl font-extrabold">{character.name}</h2>
-                <p className="mt-1 font-semibold text-inksoft">{character.role}</p>
-                <p className="mt-5 max-w-sm leading-relaxed">{character.description}</p>
-                {character.available ? (
-                  <Button className="mt-7" size="lg" onClick={() => chooseCharacter(character.id)}>
-                    Explore {character.name}&apos;s routes <Sparkles />
-                  </Button>
-                ) : (
-                  <p className="mt-7 text-sm font-bold uppercase tracking-wide text-inksoft">Routes coming soon</p>
-                )}
-              </article>
-            ))}
-          </div>
-          {!BOLI_CHARACTERS.some((character) => character.available) && (
-            <p className="mt-5 rounded-base border-2 border-border bg-[#ffd3ca] p-4 font-semibold">
-              No character routes are available yet. Add an available character and mission in the route catalogue.
-            </p>
-          )}
-        </section>
+          <form
+            className="max-w-3xl rounded-base border-2 border-black bg-[#fff6dd] p-5 text-black shadow-shadow sm:p-7"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const nextName = nameInput.trim().slice(0, 32);
+              if (!nextName) return;
+              setPlayerName(nextName);
+              openRoutePicker();
+            }}
+          >
+            <p className="text-xs font-black uppercase tracking-[0.16em] text-[#8b5b00]">Your learner</p>
+            <label className="mt-4 block text-sm font-bold" htmlFor="learner-name">What should the world call you?</label>
+            <Input id="learner-name" value={nameInput} onChange={(event) => setNameInput(event.target.value)} placeholder="Your name" className="mt-2 bg-white" autoFocus />
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <label className="block text-sm font-bold">
+                Learning now
+                <div className="mt-1 rounded-base border-2 border-black bg-[#d9ff83] px-3 py-2 font-bold">Marathi · live speaking quests</div>
+              </label>
+              <label className="block text-sm font-bold" htmlFor="support-language">
+                Explain feedback in
+                <select id="support-language" value={supportLanguage} onChange={(event) => setSupportLanguage(event.target.value as typeof supportLanguage)} className="mt-1 h-10 w-full rounded-base border-2 border-black bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-main">
+                  {SUPPORT_LANGUAGES.map((language) => <option key={language.code} value={language.code}>{language.label}</option>)}
+                </select>
+              </label>
+            </div>
+            <p className="mt-3 text-sm font-semibold text-inksoft">Each quest is three short turns: speak, get one useful correction, then try again.</p>
+            <Button className="mt-5" size="lg" type="submit" disabled={!nameInput.trim()}>
+              Explore worlds <Sparkles />
+            </Button>
+          </form>
         </div>
       </main>
     );
@@ -595,62 +698,83 @@ export function AamchiBoli() {
       <main className="relative min-h-dvh overflow-hidden bg-[#15110e] text-white">
         <Image
           src="/aamchi-boli/lobby/mumbai-monsoon-lobby.png"
-          alt="A pixel-art Mumbai monsoon evening"
+          alt="A pixel-art language-learning game world"
           fill
           sizes="100vw"
           className="object-cover"
         />
         <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(12,9,7,.88),rgba(12,9,7,.54)_52%,rgba(12,9,7,.76)),linear-gradient(0deg,rgba(12,9,7,.88),transparent_58%)]" />
         <div className="relative z-10 mx-auto flex min-h-dvh max-w-6xl flex-col px-5 py-8 sm:px-8">
-        <header className="mb-10 flex items-start justify-between gap-6 border-b-2 border-[#fff6dd]/45 pb-6">
+        <header className="mb-7 flex items-start justify-between gap-6 border-b-2 border-[#fff6dd]/45 pb-6">
           <div>
             <p className="mb-2 text-xs font-bold uppercase tracking-[0.22em] text-main">Aamchi Boli · choose a route</p>
-            <h1 className="font-display text-5xl font-extrabold tracking-tight sm:text-6xl">
-              {selectedCharacter ? `${selectedCharacter.name}'s Mumbai` : "Mumbai missions"}
-            </h1>
+            <h1 className="font-display text-5xl font-extrabold tracking-tight sm:text-6xl">{playerName}&apos;s worlds</h1>
             <p className="mt-3 max-w-2xl text-lg font-semibold text-[#fff6dd]/82">
-              Each route is a practical conversation Gemini assesses for intent, polite Marathi, and recovery after feedback.
+              Choose a place to walk through. Marathi practice is assessed for practical meaning; explanations are in {supportLanguage}.
             </p>
           </div>
-          <Button variant="neutral" onClick={() => setView("choose-character")}>Change character</Button>
+          <Button variant="neutral" onClick={() => { setNameInput(playerName); setView("welcome"); }}>Change name</Button>
         </header>
 
-        {selectedCharacter ? (
-          <section>
-            <div className="mb-5 rounded-base border-2 border-border bg-main p-5 text-black shadow-shadow">
-              <p className="text-xs font-bold uppercase tracking-[0.16em]">Playing as {selectedCharacter.name}</p>
-              <p className="mt-1 font-display text-2xl font-extrabold">{selectedCharacter.role}</p>
-              <p className="mt-2 max-w-2xl font-semibold">{selectedCharacter.description}</p>
+        <section>
+          <div className="mb-4 flex items-end justify-between gap-4">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-main">Ready-made worlds</p>
+              <p className="mt-1 text-sm font-semibold text-[#fff6dd]/75">Choose a preset, or create an entirely original world below.</p>
             </div>
-            {characterMissions.length ? (
-              <div className="grid gap-5 md:grid-cols-2">
-                {characterMissions.map((candidate) => (
-                  <article key={candidate.id} className="flex flex-col rounded-base border-2 border-border bg-secondary-background p-6 text-black shadow-shadow">
-                    <p className="flex items-center gap-1 text-xs font-bold uppercase tracking-[0.16em] text-main"><MapPin size={14} /> {candidate.area}</p>
-                    <h2 className="mt-3 font-display text-3xl font-extrabold">{candidate.title}</h2>
-                    <p className="mt-3 leading-relaxed">{candidate.briefing}</p>
-                    <div className="mt-5 rounded-base border-2 border-border/20 bg-white/60 p-3 text-sm font-semibold">
-                      <p>Talk with {candidate.npcName}, {candidate.npcRole.toLowerCase()}.</p>
-                      <p className="mt-1 text-inksoft">{candidate.steps.length} Gemini-scored speaking goal{candidate.steps.length === 1 ? "" : "s"}</p>
-                    </div>
-                    <Button className="mt-6 w-full" size="lg" disabled={!candidate.steps.length} onClick={() => void beginMission(candidate)}>
-                      {candidate.steps.length ? `Start ${candidate.title}` : "Route in development"} <Sparkles />
-                    </Button>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <div className="rounded-base border-2 border-border bg-[#ffd3ca] p-6 text-black shadow-shadow">
-                <h2 className="font-display text-3xl font-extrabold">No route is ready for {selectedCharacter.name} yet.</h2>
-                <p className="mt-2 max-w-xl font-semibold text-inksoft">Choose another point of view while the next Mumbai conversation is prepared.</p>
-              </div>
-            )}
-          </section>
-        ) : (
-          <div className="rounded-base border-2 border-border bg-[#ffd3ca] p-6 text-black shadow-shadow">
-            <p className="font-semibold">That character route is no longer available. Choose another point of view.</p>
+            <p className="hidden rounded-base border-2 border-black bg-main px-3 py-2 text-xs font-black text-black shadow-shadow sm:block">Playing as {playerName}</p>
           </div>
-        )}
+
+          <div className="grid gap-5 md:grid-cols-3">
+            {BOLI_MISSIONS.map((candidate) => (
+              <button
+                key={candidate.id}
+                type="button"
+                onClick={() => void beginMission(candidate)}
+                className="group relative min-h-[18rem] overflow-hidden rounded-base border-2 border-black text-left shadow-shadow transition hover:-translate-y-1 hover:shadow-[8px_8px_0_#000] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-main"
+                aria-label={`Enter preset world: ${candidate.title}`}
+              >
+                <Image src={candidate.mapAssetPath ?? "/aamchi-boli/lobby/mumbai-monsoon-lobby.png"} alt="" fill sizes="(min-width: 768px) 33vw, 100vw" className="object-cover transition duration-500 group-hover:scale-105" />
+                <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(5,3,2,.05)_24%,rgba(5,3,2,.92)_100%)]" />
+                <div className="absolute inset-x-0 bottom-0 p-4 text-white">
+                  <p className="flex items-center gap-1 text-[10px] font-black uppercase tracking-[0.14em] text-[#ffd166]"><MapPin size={13} /> {candidate.area}</p>
+                  <h2 className="mt-2 font-display text-2xl font-extrabold leading-tight">{candidate.title}</h2>
+                  <p className="mt-2 line-clamp-2 text-sm font-semibold text-[#fff6dd]/90">Meet {candidate.npcName} · {candidate.steps.length} speaking goals</p>
+                  <span className="mt-4 inline-flex rounded-base border-2 border-black bg-main px-3 py-2 text-xs font-black text-black shadow-shadow">Enter preset <Sparkles size={14} /></span>
+                </div>
+              </button>
+            ))}
+          </div>
+
+          <form
+            className="mt-8 rounded-base border-2 border-[#fff6dd]/60 bg-[#fff6dd] p-4 text-black shadow-shadow sm:p-5"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (openingPrompt.trim()) void beginMission(BOLI_OPEN_WORLD_MISSION, openingPrompt);
+            }}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.16em] text-[#8b5b00]"><Sparkles size={15} /> Create your own world</p>
+                <p className="mt-1 text-sm font-semibold text-inksoft">Gemini Omni turns your idea into a playable scene; Nano Banana paints it, then the Boli Guide teaches in context.</p>
+              </div>
+              <p className="rounded-base border-2 border-black bg-main px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.1em] shadow-shadow">Any safe setting</p>
+            </div>
+            <Textarea
+              id="custom-world-prompt"
+              value={openingPrompt}
+              onChange={(event) => setOpeningPrompt(event.target.value)}
+              placeholder="Describe any world: a moonlit forest library, a futuristic floating market, a quiet beach…"
+              aria-label="Describe the world Gemini should paint"
+              className="mt-4 min-h-24 resize-none bg-white"
+            />
+            <div className="mt-3 flex justify-end">
+              <Button type="submit" size="lg" disabled={!openingPrompt.trim()}>
+                Build this world <Sparkles />
+              </Button>
+            </div>
+          </form>
+        </section>
         </div>
       </main>
     );
@@ -661,7 +785,7 @@ export function AamchiBoli() {
       <main className="mx-auto flex min-h-dvh max-w-3xl items-center px-5 py-8 sm:px-8">
         <section className="w-full rounded-base border-2 border-border bg-secondary-background p-7 shadow-shadow">
           <p className="text-xs font-bold uppercase tracking-[0.16em] text-inksoft">Route unavailable</p>
-          <h1 className="mt-2 font-display text-4xl font-extrabold">Choose a playable Mumbai mission.</h1>
+          <h1 className="mt-2 font-display text-4xl font-extrabold">Choose a playable world.</h1>
           <p className="mt-3 font-semibold text-inksoft">The selected route is missing its conversation steps, so there is nothing for Gemini to assess yet.</p>
           <Button className="mt-6" onClick={returnToMissionPicker}>Back to routes</Button>
         </section>
@@ -671,32 +795,38 @@ export function AamchiBoli() {
 
   return (
     <main className="relative isolate min-h-dvh overflow-x-hidden bg-[#15110e] text-white">
-      <div className="absolute inset-0">
-        {reaction?.image ? (
-          <Image
-            src={reaction.image}
-            alt={`A Gemini-generated celebration for ${mission.title}`}
-            fill
-            unoptimized
-            sizes="100vw"
-            className="object-cover"
-          />
-        ) : map?.image ? (
-          <Image
-            src={map.image}
-            alt={`A Gemini-generated pixel-art view of ${mission.area}`}
-            fill
-            unoptimized
-            sizes="100vw"
-            className="object-cover"
-          />
-        ) : (
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_62%_34%,#f7b84b_0%,#b65a31_28%,#44362b_62%,#17120f_100%)]" />
-        )}
-      </div>
-      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(9,7,5,.72),transparent_35%,rgba(9,7,5,.18)_55%,rgba(9,7,5,.96))]" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_62%_34%,#f7b84b_0%,#b65a31_28%,#44362b_62%,#17120f_100%)]" />
+      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(9,7,5,.62),transparent_35%,rgba(9,7,5,.12)_55%,rgba(9,7,5,.9))]" />
 
       <div className="relative z-10 flex min-h-dvh flex-col">
+        <div className="pointer-events-auto absolute inset-0 z-0">
+          <BoliWorldCanvas
+            key={mission.id}
+            mission={mission}
+            imageSrc={liveWorld?.image ?? reaction?.image ?? map?.image}
+            characterName={playerName}
+            paused={conversationUnlocked || thinking || recording || showLearningPanel || loadingMap}
+            completed={completed}
+            onInteract={(hotspot) => {
+              if (hotspot.kind === "npc") setConversationUnlocked(true);
+            }}
+            onNearChange={(hotspot) => setNpcInRange(hotspot?.kind === "npc")}
+          />
+        </div>
+        {loadingMap && (
+          <div className="absolute inset-0 z-40 grid place-items-center bg-[#15110e] px-5 text-white">
+            <section className="w-full max-w-xl rounded-base border-2 border-black bg-[#fff6dd] p-6 text-black shadow-shadow sm:p-8">
+              <p className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.18em] text-[#8b5b00]"><Sparkles className="animate-pulse" size={16} /> Building your world</p>
+              <h2 className="mt-3 font-display text-4xl font-extrabold">Gemini is making the place before you enter it.</h2>
+              <p className="mt-3 text-sm font-semibold text-inksoft">Omni is shaping the game layout. Nano Banana is painting the playable map. Your Boli Guide will appear once the scene is ready.</p>
+              <div className="mt-5 grid gap-2 text-sm font-bold">
+                <p className="rounded-base border-2 border-black bg-[#d9ff83] px-3 py-2">1 · Scene direction</p>
+                <p className="rounded-base border-2 border-black bg-white px-3 py-2">2 · Pixel-art world</p>
+                <p className="rounded-base border-2 border-black bg-white px-3 py-2">3 · Three short Marathi bites</p>
+              </div>
+            </section>
+          </div>
+        )}
         <header className="flex flex-wrap items-center justify-between gap-3 border-b-2 border-white/25 bg-black/35 px-4 py-3 backdrop-blur-md sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
             <Button
@@ -708,12 +838,14 @@ export function AamchiBoli() {
               <ChevronLeft size={16} /> Routes
             </Button>
             <div className="min-w-0">
-              <p className="truncate text-[10px] font-bold uppercase tracking-[0.18em] text-[#fff6dd]/72">{selectedCharacter?.name ?? "Learner"}&apos;s Mumbai</p>
-              <p className="truncate font-display text-lg font-extrabold sm:text-xl">{mission.title}</p>
+              <p className="truncate text-[10px] font-bold uppercase tracking-[0.18em] text-[#fff6dd]/72">{playerName}&apos;s world</p>
+              <p className="truncate font-display text-lg font-extrabold sm:text-xl">{mission.title} <span className="font-sans text-xs font-bold text-[#fff6dd]/70">· Marathi + {supportLanguage}</span></p>
             </div>
           </div>
 
           <div className="ml-auto flex items-center gap-2">
+            {generatingWorld && <div className="hidden rounded-base border-2 border-black bg-[#d9ff83] px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.08em] text-black shadow-shadow sm:block">Omni · painting</div>}
+            {liveWorld && <div className="hidden rounded-base border-2 border-black bg-[#d9ff83] px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.08em] text-black shadow-shadow sm:block">{liveWorld.model.includes("omni") ? "Omni" : "Gemini"} · {liveWorld.cacheHit ? "cached" : "live"}</div>}
             <div className="hidden rounded-base border-2 border-black bg-[#fff6dd] px-3 py-1.5 text-black shadow-shadow sm:block">
               <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-inksoft">Location</p>
               <p className="flex items-center gap-1 text-xs font-bold"><MapPin size={13} /> {mission.area}</p>
@@ -765,6 +897,7 @@ export function AamchiBoli() {
                 <div><p className="text-2xl font-extrabold">{learningSummary.mastery}%</p><p className="font-semibold text-inksoft">mastery score</p></div>
                 <div><p className="font-bold">{learningSummary.firstTryWins} independent</p><p className="text-xs text-inksoft">before support</p></div>
                 <div><p className="font-bold">{learningSummary.repairsResolved} recovered</p><p className="text-xs text-inksoft">after guided practice</p></div>
+                <div><p className="font-bold">{learningSummary.reviewRecalled}/{learningSummary.reviewAttempted}</p><p className="text-xs text-inksoft">later recalls</p></div>
               </div>
               {learningSummary.totalAttempts > 0 ? (
                 <p className="mt-3 border-t-2 border-black/15 pt-3 text-xs font-semibold text-inksoft">
@@ -774,98 +907,87 @@ export function AamchiBoli() {
                 <p className="mt-3 border-t-2 border-black/15 pt-3 text-xs font-semibold text-inksoft">Your first Gemini-scored turn will create this record.</p>
               )}
               {learningSummary.hintsUsed > 0 && <p className="mt-2 text-xs font-bold">Adaptive support used on {learningSummary.hintsUsed} goal{learningSummary.hintsUsed === 1 ? "" : "s"}.</p>}
+              {learningSummary.recurringFocus && <p className="mt-2 text-xs font-bold">Next concept to revisit: {learningSummary.recurringFocus.replaceAll("_", " ")}.</p>}
               {bestMastery !== null && <p className="mt-2 text-xs font-bold">Best saved on this device: {bestMastery}%</p>}
             </article>
           </aside>
         )}
 
         <section className="relative flex min-h-[21dvh] flex-1 items-end px-4 pb-4 sm:min-h-[27dvh] sm:px-6 sm:pb-6">
-          {/* Characters stay on the map through the whole mission; only the
-              walking controls retire once the conversation begins. */}
-          {!loadingMap && !completed && (
-            <BoliWorldControls
-              characterId={selectedCharacter?.id}
-              characterName={selectedCharacter?.name ?? "Learner"}
-              npcName={mission.npcName}
-              npcId={mission.id}
-              npcPosition={mission.npcPosition}
-              playerStart={mission.playerStart}
-              walkable={mission.walkable}
-              blockers={mission.blockers}
-              enabled={!conversationUnlocked && !thinking && !recording}
-              canInteract
-              showControls={!conversationUnlocked}
-              npcTalking={conversationUnlocked}
-              onInteract={() => setConversationUnlocked(true)}
-              onProximityChange={setNpcInRange}
-            />
-          )}
-          {loadingMap ? (
-            <div className="inline-flex items-center gap-2 rounded-base border-2 border-black bg-[#fff6dd] px-4 py-3 text-sm font-bold text-black shadow-shadow">
-              <Sparkles className="animate-pulse" size={16} /> Nano Banana is painting {mission.area}…
-            </div>
-          ) : completed ? (
+          {loadingMap ? null : completed ? (
             <div className="max-w-xl rounded-base border-2 border-black bg-[#d9ff83] p-4 text-black shadow-shadow">
               <p className="flex items-center gap-2 font-display text-2xl font-extrabold"><CheckCircle2 /> Mission complete!</p>
               <p className="mt-1 font-semibold">You completed {mission.title} in practical Marathi.</p>
               {loadingReaction && <p className="mt-2 flex items-center gap-1 text-sm font-bold"><Sparkles className="animate-pulse" size={15} /> Nano Banana is illustrating your earned moment…</p>}
               {reactionNote && <p className="mt-2 text-xs font-semibold text-inksoft">{reactionNote}</p>}
             </div>
-          ) : !conversationUnlocked ? (
-            <div className="absolute left-4 top-4 z-10 max-w-xl rounded-base border-2 border-black bg-[#fff6dd] p-4 text-black shadow-shadow sm:left-6 sm:top-6">
-              <p className="text-xs font-bold uppercase tracking-[0.16em] text-inksoft">Explore before you speak</p>
-              <p className="mt-1 font-display text-xl font-extrabold">Walk to {mission.npcName} on the map.</p>
-              <p className="mt-1 text-sm font-semibold text-inksoft">Use WASD / arrow keys, then press E or Enter when the Talk prompt lights up.</p>
-            </div>
-          ) : (
+          ) : conversationUnlocked ? (
             <div className="relative z-10 max-w-xl rounded-base border-2 border-black bg-[#fff6dd] p-4 text-black shadow-shadow">
               <p className="text-xs font-bold uppercase tracking-[0.16em] text-inksoft">Quest {stepIndex + 1} of {mission.steps.length}</p>
               <p className="mt-1 font-display text-xl font-extrabold">{step.objective}</p>
             </div>
-          )}
+          ) : null}
 
-          {activeTurn && !completed && activeTurn.supportRecommendation !== "none" && (
-            <div className="absolute right-4 top-4 max-w-[255px] rounded-base border-2 border-black bg-main p-3 text-black shadow-shadow sm:right-6 sm:top-6">
-              <p className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-[0.14em]"><Sparkles size={13} /> Live Gemini cue</p>
-              <p className="mt-1 text-sm font-bold">{supportCopy(activeTurn.supportRecommendation)}</p>
-            </div>
-          )}
         </section>
 
-        <section className="relative z-20 border-t-2 border-white/35 bg-[#100d0b]/95 shadow-[0_-12px_40px_rgba(0,0,0,.32)] backdrop-blur-md">
-          <div className="mx-auto grid w-full max-w-7xl gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(340px,.75fr)] lg:px-6">
+        <section className="relative z-20 max-h-[48dvh] overflow-y-auto overscroll-contain border-t-2 border-white/35 bg-[#100d0b]/95 shadow-[0_-12px_40px_rgba(0,0,0,.32)] backdrop-blur-md sm:max-h-none sm:overflow-visible">
+          <div className={`mx-auto w-full max-w-7xl gap-4 px-4 py-4 lg:px-6 ${conversationUnlocked || completed ? "grid lg:grid-cols-[minmax(0,1.25fr)_minmax(340px,.75fr)]" : "max-w-2xl"}`}>
             <div className="no-scrollbar max-h-[39dvh] space-y-3 overflow-y-auto pr-1">
               {!completed ? (
                 !conversationUnlocked ? (
                   <article className="rounded-base border-2 border-black bg-[#fff6dd] p-4 text-black shadow-shadow">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-inksoft">Mumbai is the classroom</p>
-                    <p className="mt-1 font-display text-2xl font-extrabold">Find {mission.npcName} before starting the exchange.</p>
-                    <p className="mt-2 font-semibold text-inksoft">Move your pixel character with WASD or arrow keys. The yellow Talk button turns active only when you are close enough.</p>
-                    <p className={`mt-3 inline-flex rounded-base border-2 border-black px-3 py-2 text-sm font-bold ${npcInRange ? "bg-[#d9ff83]" : "bg-[#ffd3ca]"}`}>
-                      {npcInRange ? `You are next to ${mission.npcName}. Press E to talk.` : `${mission.npcName} is ahead on the map — walk closer.`}
-                    </p>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-inksoft">Explore</p>
+                        <p className="mt-1 font-display text-2xl font-extrabold">Walk to {mission.npcName}.</p>
+                        <p className="mt-1 text-sm font-semibold text-inksoft">WASD / arrows to move · E / Enter to talk</p>
+                        {error && <p className="mt-2 rounded-base border-2 border-black bg-[#ffd3ca] px-2 py-1 text-xs font-bold">{error}</p>}
+                      </div>
+                      <Button disabled={!npcInRange || thinking || recording} onClick={() => setConversationUnlocked(true)}>
+                        <Sparkles /> {npcInRange ? `Talk to ${mission.npcName}` : "Walk closer"}
+                      </Button>
+                    </div>
                   </article>
                 ) : (
                   <>
-                    <article className="rounded-base border-2 border-black bg-[#fff6dd] p-4 text-black shadow-shadow">
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-inksoft">{mission.npcName} says</p>
-                          <p className="mt-1 text-xl font-bold leading-snug sm:text-2xl">{step.npcPromptMr}</p>
-                          <p className="mt-1 text-sm font-medium text-inksoft">{step.npcPromptEn}</p>
+                    {activeReview ? (
+                      <article className="rounded-base border-2 border-black bg-[#d9ff83] p-4 text-black shadow-shadow">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-inksoft">Memory checkpoint · Gemini review</p>
+                        <p className="mt-1 font-display text-2xl font-extrabold">Can you recall this useful line?</p>
+                        <p className="mt-2 text-sm font-semibold">Say the Marathi phrase for: <span className="font-bold">{activeReview.phrase.meaning}</span></p>
+                        <p className="mt-2 text-xs font-semibold text-inksoft">No full answer is shown. A close, natural meaning counts as independent recall.</p>
+                        <Button variant="neutral" size="sm" className="mt-3" onClick={() => setReviewingItemId(null)}>Return to mission</Button>
+                      </article>
+                    ) : (
+                      <article className="rounded-base border-2 border-black bg-[#fff6dd] p-4 text-black shadow-shadow">
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-inksoft">{mission.npcName} says</p>
+                            <p className="mt-1 text-xl font-bold leading-snug sm:text-2xl">{step.npcPromptMr}</p>
+                            <p className="mt-1 text-sm font-medium text-inksoft">{step.npcPromptEn}</p>
+                          </div>
+                          <Button
+                            variant="neutral"
+                            size="sm"
+                            className="shrink-0"
+                            disabled={speaking}
+                            aria-label={speaking ? "Gemini voice is speaking" : "Hear Gemini voice"}
+                            onClick={() => void speakNpc(step.npcPromptMr)}
+                          >
+                            <Volume2 size={15} /> {speaking ? "Speaking…" : "Hear voice"}
+                          </Button>
                         </div>
-                        <Button
-                          variant="neutral"
-                          size="sm"
-                          className="shrink-0"
-                          disabled={speaking}
-                          aria-label={speaking ? "Gemini voice is speaking" : "Hear Gemini voice"}
-                          onClick={() => void speakNpc(step.npcPromptMr)}
-                        >
-                          <Volume2 size={15} /> {speaking ? "Speaking…" : "Hear voice"}
-                        </Button>
-                      </div>
-                    </article>
+                      </article>
+                    )}
+
+                    {!activeReview && reviewQueue.length > 0 && (
+                      <article className="rounded-base border-2 border-black bg-[#ffe8a8] p-4 text-black shadow-shadow">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-inksoft">Remember this · optional checkpoint</p>
+                        <p className="mt-1 font-bold">One earlier phrase is ready for a quick recall.</p>
+                        <p className="mt-1 text-sm font-semibold">It will not block the next quest objective.</p>
+                        <Button variant="neutral" size="sm" className="mt-3" onClick={() => setReviewingItemId(reviewQueue[0].id)}>Practice memory</Button>
+                      </article>
+                    )}
 
                     {recentlyClearedTurn && (
                       <article className="rounded-base border-2 border-black bg-[#d9ff83] p-4 text-black shadow-shadow">
@@ -877,82 +999,21 @@ export function AamchiBoli() {
 
                     {activeTurn && (
                       <article className="rounded-base border-2 border-black bg-[#d9ff83] p-4 text-black shadow-shadow">
-                        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-inksoft">Gemini&apos;s adaptive practice coach · level {activeTurn.adaptiveFeedback.level}/2</p>
-                        <p className="mt-1 font-bold">{activeTurn.intent}</p>
-                        <div className="mt-3 rounded-base border-2 border-black/15 bg-white/60 p-3">
-                          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-inksoft">
-                            Gemini heard via {activeTurn.inputMode === "voice" ? "your voice" : "typed practice"}
-                          </p>
-                          <p className="mt-1 text-sm font-semibold leading-snug">{activeTurn.heardMarathi || activeTurn.transcript || "No clear transcript"}</p>
-                        </div>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                          <div className="rounded-base border-2 border-black/15 bg-white/60 p-3">
-                            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-inksoft">What worked</p>
-                            <p className="mt-1 text-sm font-semibold">{activeTurn.adaptiveFeedback.whatWorked}</p>
-                          </div>
-                          <div className="rounded-base border-2 border-black/15 bg-white/60 p-3">
-                            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-inksoft">One next move</p>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-inksoft">Quick coach · {activeTurn.outcome === "success" ? "clear" : `retry ${activeTurn.adaptiveFeedback.level}/2`}</p>
+                        <p className="mt-1 font-bold">{activeTurn.adaptiveFeedback.whatWorked}</p>
+                        {activeTurn.outcome !== "success" && (
+                          <div className="mt-3 rounded-base border-2 border-black/15 bg-white/70 p-3">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-inksoft">One small change</p>
                             <p className="mt-1 text-sm font-semibold">{activeTurn.adaptiveFeedback.nextFocus}</p>
-                          </div>
-                        </div>
-                        <p className="mt-3 text-lg font-bold leading-snug">{activeTurn.npcLineMr}</p>
-                        <p className="mt-1 text-sm font-medium text-inksoft">{activeTurn.npcLineEn}</p>
-                        <Button
-                          variant="neutral"
-                          size="sm"
-                          className="mt-3"
-                          disabled={speaking}
-                          aria-label={speaking ? "Gemini voice is speaking" : "Hear Gemini voice"}
-                          onClick={() => void speakNpc(activeTurn.npcLineMr)}
-                        >
-                          <Volume2 size={15} /> {speaking ? "Speaking…" : "Hear reply"}
-                        </Button>
-                        <div className="mt-4 border-t-2 border-black/20 pt-3">
-                          <p className="text-xs font-bold uppercase tracking-[0.14em] text-inksoft">Build this small part</p>
-                          <p className="mt-1 font-bold">{activeTurn.adaptiveFeedback.keyChunk.marathi}</p>
-                          <p className="text-sm italic text-inksoft">{activeTurn.adaptiveFeedback.keyChunk.transliteration}</p>
-                          <p className="mt-1 text-sm">{activeTurn.adaptiveFeedback.keyChunk.meaning}</p>
-                          <Button
-                            variant="neutral"
-                            size="sm"
-                            className="mt-3"
-                            disabled={speaking}
-                            onClick={() => void speakNpc(activeTurn.adaptiveFeedback.keyChunk.marathi, true)}
-                          >
-                            <Volume2 size={15} /> {speaking ? "Speaking…" : "Hear slowly"}
-                          </Button>
-                        </div>
-                        {activeTurn.recast && (
-                          <div className="mt-4 border-t-2 border-black/20 pt-3">
-                            <p className="text-xs font-bold uppercase tracking-[0.14em] text-inksoft">Then say it naturally</p>
-                            <p className="mt-1 font-bold">{activeTurn.recast.marathi}</p>
-                            <p className="text-sm italic text-inksoft">{activeTurn.recast.transliteration}</p>
-                            <p className="mt-1 text-sm">{activeTurn.recast.meaning}</p>
+                            <p className="mt-3 font-bold">{activeTurn.adaptiveFeedback.keyChunk.marathi}</p>
+                            <p className="text-sm italic text-inksoft">{activeTurn.adaptiveFeedback.keyChunk.transliteration} · {activeTurn.adaptiveFeedback.keyChunk.meaning}</p>
+                            <Button variant="neutral" size="sm" className="mt-3" disabled={speaking} onClick={() => void speakNpc(activeTurn.adaptiveFeedback.keyChunk.marathi, true)}>
+                              <Volume2 size={15} /> {speaking ? "Speaking…" : "Hear slowly"}
+                            </Button>
                           </div>
                         )}
-                      </article>
-                    )}
-
-                    {showHint && activeTurn?.supportRecommendation === "phrase_fragment" && (
-                      <article className="rounded-base border-2 border-black bg-main p-4 text-black shadow-shadow">
-                        <p className="text-xs font-bold uppercase tracking-[0.14em]">Phrase fragment</p>
-                        <p className="mt-1 font-bold">{activeTurn.adaptiveFeedback.keyChunk.marathi}</p>
-                        <p className="mt-1 text-sm italic">{activeTurn.adaptiveFeedback.keyChunk.transliteration}</p>
-                        <p className="mt-1 text-sm">{activeTurn.adaptiveFeedback.keyChunk.meaning}</p>
-                      </article>
-                    )}
-
-                    {showHint && activeTurn?.supportRecommendation === "visual_hint" && (
-                      <article className="rounded-base border-2 border-black bg-main p-4 text-black shadow-shadow">
-                        <p className="text-xs font-bold uppercase tracking-[0.14em]">Map cue</p>
-                        <p className="mt-1 font-bold">Picture the conversation at {mission.area} with {mission.npcName}; answer only the current practical goal.</p>
-                      </article>
-                    )}
-
-                    {showHint && activeTurn?.supportRecommendation === "slow_repeat" && (
-                      <article className="rounded-base border-2 border-black bg-main p-4 text-black shadow-shadow">
-                        <p className="text-xs font-bold uppercase tracking-[0.14em]">Slow practice unlocked</p>
-                        <p className="mt-1 font-bold">Repeat the small part above once, then rebuild your own answer. You do not need to copy a perfect sentence.</p>
+                        <p className="mt-3 text-base font-bold leading-snug">{activeTurn.npcLineMr}</p>
+                        <p className="mt-1 text-sm font-medium text-inksoft">{activeTurn.npcLineEn}</p>
                       </article>
                     )}
 
@@ -971,18 +1032,18 @@ export function AamchiBoli() {
                 <article className="rounded-base border-2 border-black bg-[#d9ff83] p-4 text-black shadow-shadow">
                   <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-inksoft">Route reflection</p>
                   <p className="mt-1 font-display text-2xl font-extrabold">{learningSummary.mastery}% practical mastery</p>
-                  <p className="mt-2 font-semibold">You cleared {learningSummary.cleared} of {mission.steps.length} real-world speaking goal{mission.steps.length === 1 ? "" : "s"} as {selectedCharacter?.name ?? "the learner"}.</p>
-                  {reaction?.image && <p className="mt-2 text-sm font-bold">Your earned Mumbai moment is now on the map.</p>}
+                  <p className="mt-2 font-semibold">You cleared {learningSummary.cleared} of {mission.steps.length} real-world speaking goal{mission.steps.length === 1 ? "" : "s"} as {playerName}.</p>
+                  {reaction?.image && <p className="mt-2 text-sm font-bold">Your earned moment is now on the map.</p>}
                 </article>
               )}
             </div>
 
-            <aside className="rounded-base border-2 border-black bg-[#fff6dd] p-4 text-black shadow-shadow">
+            {(conversationUnlocked || completed) && <aside className="rounded-base border-2 border-black bg-[#fff6dd] p-4 text-black shadow-shadow">
               <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-inksoft">{conversationUnlocked || completed ? "Speak your way forward" : "Walk your way forward"}</p>
               <div className="mt-1 flex items-start justify-between gap-3">
                 <div>
                   <h2 className="font-display text-2xl font-extrabold">{mission.npcName}</h2>
-                  <p className="mt-1 text-sm font-semibold text-inksoft">{selectedCharacter?.name ?? "Learner"} · {mission.npcRole}</p>
+                  <p className="mt-1 text-sm font-semibold text-inksoft">{playerName} · {mission.npcRole}</p>
                 </div>
                 {!completed && <p className="rounded-base border-2 border-black/25 bg-white px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em]">Step {stepIndex + 1}/{mission.steps.length}</p>}
               </div>
@@ -993,18 +1054,6 @@ export function AamchiBoli() {
                   <Button onClick={() => resetMission()}><Sparkles /> Play again</Button>
                   <Button variant="neutral" onClick={returnToMissionPicker}>Choose a route</Button>
                 </div>
-              ) : !conversationUnlocked ? (
-                <div className="mt-4">
-                  <p className="text-sm font-semibold text-inksoft">{npcInRange ? `${mission.npcName} can hear you now.` : `Find the ${mission.npcName} target marker in the world.`}</p>
-                  <Button
-                    className="mt-3 w-full"
-                    disabled={!npcInRange || thinking || recording}
-                    onClick={() => setConversationUnlocked(true)}
-                  >
-                    <Sparkles /> {npcInRange ? `Talk to ${mission.npcName}` : "Walk closer to talk"}
-                  </Button>
-                  <p className="mt-3 text-xs font-bold uppercase tracking-[0.12em] text-inksoft">WASD / arrows to move · E / Enter to interact</p>
-                </div>
               ) : (
                 <>
                   <Button
@@ -1014,7 +1063,7 @@ export function AamchiBoli() {
                     onClick={recording ? stopRecording : startRecording}
                   >
                     <Mic className={recording ? "animate-pulse" : ""} />
-                    {recording ? "Tap to send your answer" : thinking ? "Gemini is listening…" : "Record a Marathi turn"}
+                    {recording ? "Listening… silence sends" : thinking ? "Gemini is listening…" : "Record a Marathi turn"}
                   </Button>
                   <form
                     className="mt-3 flex gap-2"
@@ -1042,7 +1091,7 @@ export function AamchiBoli() {
                   </button>
                 </>
               )}
-            </aside>
+            </aside>}
           </div>
         </section>
       </div>

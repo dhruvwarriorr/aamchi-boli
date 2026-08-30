@@ -6,7 +6,7 @@ import Image from "next/image";
 export type CharacterDirection = "down" | "up" | "left" | "right";
 
 export type CharacterSpriteProps = {
-  /** Playable role ("student" | "auto_driver") or NPC identifier. */
+  /** Internal learner/NPC sprite identity. */
   characterId?: string;
   /** Character display name (e.g. "Aarav", "Raju", "Meera Tai"). */
   characterName: string;
@@ -56,32 +56,6 @@ const SPRITE_PATHS: Record<string, Record<string, string[]>> = {
       "/aamchi-boli/sprites/aarav/up-1.png",
       "/aamchi-boli/sprites/aarav/up-2.png",
       "/aamchi-boli/sprites/aarav/up-3.png",
-    ],
-  },
-  ananya: {
-    idle: [
-      "/aamchi-boli/sprites/ananya/idle-0.png",
-      "/aamchi-boli/sprites/ananya/idle-1.png",
-      "/aamchi-boli/sprites/ananya/idle-2.png",
-      "/aamchi-boli/sprites/ananya/idle-3.png",
-    ],
-    left: [
-      "/aamchi-boli/sprites/ananya/left-0.png",
-      "/aamchi-boli/sprites/ananya/left-1.png",
-      "/aamchi-boli/sprites/ananya/left-2.png",
-      "/aamchi-boli/sprites/ananya/left-3.png",
-    ],
-    right: [
-      "/aamchi-boli/sprites/ananya/right-0.png",
-      "/aamchi-boli/sprites/ananya/right-1.png",
-      "/aamchi-boli/sprites/ananya/right-2.png",
-      "/aamchi-boli/sprites/ananya/right-3.png",
-    ],
-    wave: [
-      "/aamchi-boli/sprites/ananya/wave-0.png",
-      "/aamchi-boli/sprites/ananya/wave-1.png",
-      "/aamchi-boli/sprites/ananya/wave-2.png",
-      "/aamchi-boli/sprites/ananya/wave-3.png",
     ],
   },
   meera: {
@@ -198,16 +172,14 @@ function npcCycle(key: string, preferred: string[]): string[] {
   return stitched.length > 0 ? stitched : pickTrack(key, preferred);
 }
 
-function resolveCharacterKey(characterId?: string, name?: string): "aarav" | "raju" | "meera" | "nisha" | "ananya" {
+function resolveCharacterKey(characterId?: string, name?: string): "aarav" | "raju" | "meera" | "nisha" {
   const normId = (characterId ?? "").toLowerCase();
   const normName = (name ?? "").toLowerCase();
 
-  if (normId === "student" || normName.includes("aarav")) return "aarav";
-  if (normId === "auto_driver" || normName.includes("raju")) return "raju";
+  if (normId === "learner" || normName.includes("aarav")) return "aarav";
+  if (normName.includes("raju")) return "raju";
   if (normId.includes("meera") || normName.includes("meera")) return "meera";
   if (normId.includes("nisha") || normName.includes("nisha")) return "nisha";
-  if (normId.includes("ananya") || normName.includes("ananya")) return "ananya";
-
   return "aarav";
 }
 

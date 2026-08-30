@@ -28,9 +28,6 @@ export type Premise = {
 /* Aamchi Boli — fixed, real-world Marathi learning missions           */
 /* ------------------------------------------------------------------ */
 
-/** Playable point of view in Aamchi Boli. */
-export type BoliCharacterId = "student" | "auto_driver";
-
 /** Skill evidence awarded by a Marathi practice turn. */
 export type BoliSkillId =
   | "greeting"
@@ -65,10 +62,28 @@ export type BoliWorldPoint = { x: number; y: number };
 /** An axis-aligned region of the map plane, in the same percentage units. */
 export type BoliWorldRect = { x: number; y: number; w: number; h: number };
 
+/** A deliberate interaction point on a prebuilt Boli map. */
+export type BoliMapHotspot = {
+  id: string;
+  kind: "npc" | "landmark" | "vehicle" | "goal";
+  name: string;
+  x: number;
+  y: number;
+  radius: number;
+  prompt?: string;
+};
+
+/** Percentage-based collision rectangle used by the canvas world. */
+export type BoliWalkableZone = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 /** Code-owned scenario definition; Gemini may react but cannot change it. */
 export type BoliMission = {
   id: string;
-  characterId: BoliCharacterId;
   title: string;
   area: string;
   briefing: string;
@@ -90,6 +105,10 @@ export type BoliMission = {
   walkable: BoliWorldRect[];
   /** Solid props inside the walkable ground — vehicles, stalls, railings. */
   blockers?: BoliWorldRect[];
+  /** Talkable NPCs and visible landmarks that anchor the RPG route. */
+  mapHotspots: BoliMapHotspot[];
+  /** New canvas collision data; `walkable` remains for backwards compatibility. */
+  walkableZones?: BoliWalkableZone[];
   mapPrompt: string;
   reactionPrompt: string;
   steps: BoliMissionStep[];

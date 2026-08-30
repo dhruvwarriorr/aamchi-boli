@@ -45,6 +45,20 @@ export async function generateContentWithRetry(
   });
 }
 
+/**
+ * Gemini Omni currently exposes its generation surface through Interactions,
+ * rather than `models.generateContent`. Keep its retry policy identical to the
+ * rest of the app without forcing callers to know the transport difference.
+ */
+export async function generateInteractionWithRetry(
+  params: Parameters<GoogleGenAI["interactions"]["create"]>[0]
+) {
+  return withRetry(() => ai().interactions.create(params), {
+    ...DEFAULT_RETRY_OPTS,
+    shouldRetry: shouldRetryGeminiRequest,
+  });
+}
+
 export type StoryBeat = {
   caption: string;
   outcomeFlash: string;
