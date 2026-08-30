@@ -22,7 +22,7 @@ let boliCacheInflight: Promise<string | null> | null = null;
 function fixedCurriculumContext(): string {
   return [
     "Aamchi Boli is a Marathi learning RPG for English-speaking beginners in Mumbai.",
-    "Judge practical communicative intent, never accent, identity, spelling, or formal register. Devanagari, transliteration, and understandable Marathi-English/Hindi mixes are valid learner language.",
+    "Judge practical communicative intent, never accent, identity, spelling, or formal register. Devanagari Marathi and Marathi transliteration are valid learner language. English and Hindi may explain a lesson but never clear a Marathi-production objective.",
     "A learner clears a goal only when every concrete signal in that goal's pass condition is present. A vague yes never replaces a destination, landmark, agreement, or action. Grammar slips and missing honorifics are fine when the needed meaning is clear.",
     "On a miss: say one genuine thing understood, identify one concrete gap, offer only the smallest useful Marathi chunk, and use a warm natural recast. Never shame, grade, add curriculum objectives, or judge accent. On a clear response: affirm briefly and do not add correction work.",
     "Mission state belongs to the game, so score only the current objective and never invent steps or locations.",
