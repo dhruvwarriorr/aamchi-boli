@@ -90,7 +90,9 @@ const WORD_BY_WORD: Record<string, MarathiWordNote[]> = {
   "open-world:1": [
     { word: "मला", transliteration: "mala", meaning: "to me / I" },
     { word: "इथे", transliteration: "ithe", meaning: "here" },
-    { word: "काहीतरी", transliteration: "kahitari", meaning: "something" },
+    { word: "एक", transliteration: "ek", meaning: "one / a" },
+    { word: "सुंदर", transliteration: "sundar", meaning: "beautiful" },
+    { word: "जागा", transliteration: "jaga", meaning: "place" },
     { word: "दिसते", transliteration: "disate", meaning: "is visible / I can see" },
   ],
   "open-world:2": [
