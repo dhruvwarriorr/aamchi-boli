@@ -29,6 +29,99 @@ const SUPPORT_LANGUAGES = [
   { label: "Telugu", code: "Telugu" },
 ] as const;
 
+type MarathiWordNote = { word: string; transliteration: string; meaning: string };
+
+/** Small code-owned glosses make every fixed speaking goal teachable. */
+const WORD_BY_WORD: Record<string, MarathiWordNote[]> = {
+  "kj-college-gate:0": [
+    { word: "नमस्कार", transliteration: "namaskar", meaning: "hello" },
+    { word: "मला", transliteration: "mala", meaning: "to me / I want" },
+    { word: "जायचे", transliteration: "jayache", meaning: "to go" },
+    { word: "आहे", transliteration: "aahe", meaning: "want / is" },
+  ],
+  "kj-college-gate:1": [
+    { word: "हो", transliteration: "ho", meaning: "yes" },
+    { word: "मुख्य", transliteration: "mukhya", meaning: "main" },
+    { word: "गेटवर", transliteration: "gatevar", meaning: "at the gate" },
+    { word: "उतरायचे", transliteration: "utarayache", meaning: "to get down" },
+  ],
+  "kj-college-gate:2": [
+    { word: "धन्यवाद", transliteration: "dhanyavad", meaning: "thank you" },
+    { word: "ताई", transliteration: "tai", meaning: "a respectful older-sister / ma'am" },
+  ],
+  "dadar-bus-stop:0": [
+    { word: "शिवाजी पार्कला", transliteration: "Shivaji Park-la", meaning: "to Shivaji Park" },
+    { word: "जाणारी", transliteration: "janari", meaning: "going" },
+    { word: "बस", transliteration: "bus", meaning: "bus" },
+    { word: "मिळेल", transliteration: "milel", meaning: "will I get / find" },
+  ],
+  "dadar-bus-stop:1": [
+    { word: "म्हणजे", transliteration: "mhanje", meaning: "so that means" },
+    { word: "पुलाखालच्या", transliteration: "pulakhalachya", meaning: "below the bridge" },
+    { word: "बस थांब्यावर", transliteration: "bus thambyavar", meaning: "at the bus stop" },
+    { word: "बरोबर ना", transliteration: "barobar na", meaning: "right?" },
+  ],
+  "dadar-bus-stop:2": [
+    { word: "खूप", transliteration: "khoop", meaning: "very much" },
+    { word: "धन्यवाद", transliteration: "dhanyavad", meaning: "thank you" },
+    { word: "आता", transliteration: "ata", meaning: "now" },
+    { word: "तिकडे जातो", transliteration: "tikade jato", meaning: "I will go there" },
+  ],
+  "bandra-station-pickup:0": [
+    { word: "मला", transliteration: "mala", meaning: "to me / I want" },
+    { word: "बीकेसीला", transliteration: "BKC-la", meaning: "to BKC" },
+    { word: "जायचे", transliteration: "jayache", meaning: "to go" },
+    { word: "आहे", transliteration: "aahe", meaning: "want / is" },
+  ],
+  "bandra-station-pickup:1": [
+    { word: "मुख्य", transliteration: "mukhya", meaning: "main" },
+    { word: "बस थांब्याजवळ", transliteration: "bus thambyajaval", meaning: "near the bus stop" },
+    { word: "उतरायचे", transliteration: "utarayache", meaning: "to get down" },
+    { word: "आहे", transliteration: "aahe", meaning: "want / is" },
+  ],
+  "bandra-station-pickup:2": [
+    { word: "धन्यवाद", transliteration: "dhanyavad", meaning: "thank you" },
+    { word: "मी", transliteration: "mi", meaning: "I" },
+    { word: "बसतो", transliteration: "basto", meaning: "will sit / get in" },
+  ],
+  "open-world:0": [
+    { word: "नमस्कार", transliteration: "namaskar", meaning: "hello" },
+  ],
+  "open-world:1": [
+    { word: "मला", transliteration: "mala", meaning: "to me / I" },
+    { word: "इथे", transliteration: "ithe", meaning: "here" },
+    { word: "काहीतरी", transliteration: "kahitari", meaning: "something" },
+    { word: "दिसते", transliteration: "disate", meaning: "is visible / I can see" },
+  ],
+  "open-world:2": [
+    { word: "मला", transliteration: "mala", meaning: "to me / I want" },
+    { word: "मराठी", transliteration: "Marathi", meaning: "Marathi" },
+    { word: "शिकायची", transliteration: "shikayachi", meaning: "to learn" },
+    { word: "मदत करा", transliteration: "madat kara", meaning: "please help" },
+  ],
+};
+
+function PhraseLesson({ missionId, stepIndex, phrase, compact = false }: { missionId: string; stepIndex: number; phrase: { marathi: string; transliteration: string; meaning: string }; compact?: boolean }) {
+  const notes = WORD_BY_WORD[`${missionId}:${stepIndex}`] ?? [];
+  return (
+    <div className={`${compact ? "mt-2" : "mt-3"} rounded-base border-2 border-black/15 bg-white/75 p-3`}>
+      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-inksoft">Learn this line</p>
+      <p className="mt-1 font-bold">{phrase.marathi}</p>
+      <p className="text-sm italic text-inksoft">{phrase.transliteration}</p>
+      <p className="mt-1 text-sm font-semibold">{phrase.meaning}</p>
+      {notes.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {notes.map((note) => (
+            <span key={`${note.word}-${note.meaning}`} className="rounded-base border border-black/20 bg-[#ffe8a8] px-2 py-1 text-xs leading-tight">
+              <strong>{note.word}</strong> <em className="text-inksoft">({note.transliteration})</em> = {note.meaning}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function stepLearningKey(stepIndex: number): string {
   return `step:${stepIndex}`;
 }
@@ -998,6 +1091,15 @@ export function AamchiBoli() {
                             <Volume2 size={15} /> {speaking ? "Speaking…" : "Hear voice"}
                           </Button>
                         </div>
+                        <PhraseLesson
+                          missionId={mission.id}
+                          stepIndex={stepIndex}
+                          phrase={scenePhrase ?? {
+                            marathi: step.targetPhraseMr,
+                            transliteration: step.targetPhraseLatin,
+                            meaning: step.targetPhraseEn,
+                          }}
+                        />
                       </article>
                     )}
 
@@ -1026,6 +1128,18 @@ export function AamchiBoli() {
                       <article className="rounded-base border-2 border-black bg-[#d9ff83] p-4 text-black shadow-shadow">
                         <p className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-inksoft"><CheckCircle2 size={14} /> Checkpoint cleared</p>
                         <p className="mt-1 font-bold">{recentlyClearedTurn.adaptiveFeedback.whatWorked}</p>
+                        {turnStepIndex !== null && (
+                          <PhraseLesson
+                            missionId={mission.id}
+                            stepIndex={turnStepIndex}
+                            phrase={{
+                              marathi: mission.steps[turnStepIndex].targetPhraseMr,
+                              transliteration: mission.steps[turnStepIndex].targetPhraseLatin,
+                              meaning: mission.steps[turnStepIndex].targetPhraseEn,
+                            }}
+                            compact
+                          />
+                        )}
                         <p className="mt-2 text-sm font-semibold">Next: {step.objective}</p>
                       </article>
                     )}
@@ -1049,6 +1163,16 @@ export function AamchiBoli() {
                           <p className="mt-2 rounded-base border-2 border-black bg-[#ffd3ca] p-2 text-sm font-black">Marathi practice needed. English or Hindi can help you understand, but only Marathi clears this task.</p>
                         )}
                         <p className="mt-1 font-bold">{activeTurn.adaptiveFeedback.whatWorked}</p>
+                        <PhraseLesson
+                          missionId={mission.id}
+                          stepIndex={activeReview?.sourceStepIndex ?? stepIndex}
+                          phrase={scenePhrase ?? {
+                            marathi: conversationStep?.targetPhraseMr ?? step.targetPhraseMr,
+                            transliteration: conversationStep?.targetPhraseLatin ?? step.targetPhraseLatin,
+                            meaning: conversationStep?.targetPhraseEn ?? step.targetPhraseEn,
+                          }}
+                          compact
+                        />
                         {activeTurn.outcome !== "success" && (
                           <div className="mt-3 rounded-base border-2 border-black/15 bg-white/70 p-3">
                             <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-inksoft">One small change</p>
