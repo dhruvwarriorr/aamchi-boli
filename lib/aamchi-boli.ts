@@ -97,6 +97,16 @@ const BOLI_REACTION_STYLE =
 const BOLI_OMNI_MODEL = process.env.BOLI_OMNI_MODEL || "gemini-omni-1.1-flash";
 const omniWorldCache = new Map<string, { expiresAt: number; result: BoliOmniWorldResponse }>();
 
+function isUsableScenePhrase(value: { marathi: string; transliteration: string; meaning: string }): boolean {
+  const marathi = value.marathi.trim();
+  const transliteration = value.transliteration.trim().toLowerCase();
+  const meaning = value.meaning.trim().toLowerCase();
+  return Boolean(marathi) && Boolean(transliteration) && Boolean(meaning)
+    && (/दिस/.test(marathi) || /\bdis(?:at|ate|te|tat)\b/.test(transliteration))
+    && /\b(?:see|visible|look)\b/.test(meaning)
+    && !/[?？]$/.test(marathi);
+}
+
 const turnSchema = {
   type: Type.OBJECT,
   properties: {
@@ -279,11 +289,12 @@ export async function generateBoliOmniWorld(mission: BoliMission, userPrompt: st
     if (parsed.scenePhrase && typeof parsed.scenePhrase === "object") {
       const phrase = parsed.scenePhrase as Record<string, unknown>;
       if (typeof phrase.marathi === "string" && typeof phrase.transliteration === "string" && typeof phrase.meaning === "string") {
-        scenePhrase = {
+        const candidate = {
           marathi: phrase.marathi.trim().slice(0, 180),
           transliteration: phrase.transliteration.trim().slice(0, 180),
           meaning: phrase.meaning.trim().slice(0, 180),
         };
+        if (isUsableScenePhrase(candidate)) scenePhrase = candidate;
       }
     }
   } catch {
@@ -398,6 +409,32 @@ function objectiveSignals(missionId: string, stepIndex: number, utterance: strin
   if (missionId === "open-world" && stepIndex === 1) return has(/disat|diste|dist|दिसत|दिसते/);
   if (missionId === "open-world" && stepIndex === 2) return has(/marathi|मराठी|madat|मदत|shik|शिक/);
   return true;
+}
+
+/**
+ * Require actual Marathi production before a fixed objective can clear.
+ * English and Hindi remain available as explanation languages, but they are
+ * not evidence that the learner practised Marathi. Latin transliteration is
+ * deliberately accepted because many beginners cannot type Devanagari yet.
+ */
+function isMarathiAttempt(utterance: string): boolean {
+  const text = utterance.toLowerCase().replace(/[.,!?;:()]/g, " ");
+  const marathiPatterns = [
+    /\bnamaskar\b|नमस्कार|नमश्कार|नमसकार/,
+    /\bmala\b|मला/,
+    /\bmi\b|\baahe\b|\bahe\b|\baho\b|\bho\b|\bhoy\b|\bbarobar\b|\bkuthe\b|\bithe\b|\btikade\b/,
+    /\bjaya(?:che|cha|chi)\b|\butara(?:yache|ycha|ychi)\b|\bmilel\b|\bthamb(?:a|yajaval)?\b/,
+    /\bdhanyavad\b|\bmadat\b|\bshik(?:ayachi|aycha|ayche|ayla)\b|\bdis(?:at|ate|te|tat)\b/,
+    /\bkara\b|\bjato\b|\bjate\b|\bjayla\b|\bcollege\s+la\b|\bbkc\s+la\b/,
+    /मी|आहे|होय|बरोबर|कुठे|इथे|तिकडे|जायचे|जायची|उतरायचे|मिळेल|थांब|धन्यवाद|मदत|शिकायची|दिसते|दिसतात|करा|जातो|जाते/,
+  ];
+  const hindiPatterns = [
+    /\bmujhe\b|\bmain\b|\bjaana\b|\bjana\b|\bkahan\b|\bshukriya\b|\bseekhna\b|\bdikh(?:ta|ti|te)\b/,
+    /मुझे|मैं|जाना|कहाँ|शुक्रिया|सीखना|दिखता|दिखती|कृपया/,
+  ];
+  const marathiScore = marathiPatterns.filter((pattern) => pattern.test(text)).length;
+  const hindiScore = hindiPatterns.filter((pattern) => pattern.test(text)).length;
+  return marathiScore > 0 && marathiScore >= hindiScore;
 }
 
 function safeSkills(value: unknown, currentSkill: BoliSkillId): BoliSkillId[] {
@@ -519,7 +556,9 @@ export async function evaluateBoliTurn(body: BoliTurnBody): Promise<BoliTurnResp
     "The learner does NOT have to reproduce this sentence, its word order, its length, or its formal noun phrases. Never withhold success because their answer was shorter or simpler than this reference.",
     "",
     "=== HOW TO SCORE ===",
-    "Judge communicative intent, never accent, never spelling. Devanagari, Latin transliteration, and understandable mixed Marathi/English/Hindi are all valid learner attempts.",
+    "Judge communicative intent, never accent and never spelling. Devanagari Marathi and Latin Marathi transliteration are valid learner attempts.",
+    "English and Hindi may be used only for explanations. An answer spoken or typed only in English or Hindi must not pass a Marathi production objective. Mark it mixed_language and ask for the same meaning again in Marathi.",
+    "For audio, transcript must preserve what the learner actually said. Do not translate English or Hindi speech into Marathi inside transcript or heardMarathi.",
     "success: every required communicative signal in the pass condition is present. Grammar slips, missing honorifics, a missing greeting, English loanwords, and casual phrasing are fine only when the required meaning is still present. Never mark success when a required destination, landmark, agreement, or action is absent.",
     "partial: they are clearly attempting this objective and are close, but one required piece of meaning from the pass condition is missing.",
     "repair_needed: they said something understandable but wrong for this objective, so the NPC would naturally ask again.",
@@ -592,17 +631,22 @@ export async function evaluateBoliTurn(body: BoliTurnBody): Promise<BoliTurnResp
   }
   const modelOutcome = asOutcome(raw.outcome);
   const modelSkills = safeSkills(raw.skillEvidence, step.skill);
-  const utteranceForGuard = hasAudio
-    ? [raw.transcript, raw.heardMarathi].filter((value): value is string => typeof value === "string").join(" ")
-    : typed;
+  const primaryAudioTranscript = typeof raw.transcript === "string" && raw.transcript.trim()
+    ? raw.transcript
+    : typeof raw.heardMarathi === "string"
+      ? raw.heardMarathi
+      : "";
+  const utteranceForGuard = hasAudio ? primaryAudioTranscript : typed;
   const signalsPresent = objectiveSignals(mission.id, stepIndex, utteranceForGuard);
+  const marathiPresent = isMarathiAttempt(utteranceForGuard);
   // A model cannot unlock a fixed route on its own. Even if Gemini is
   // optimistic and returns `success`, the utterance must contain the concrete
   // destination/landmark/action signal for this exact objective. Once that
   // signal is present, code-owned curriculum rules can safely grant one step
   // even when Gemini labelled a short beginner answer as partial.
-  const awardedSkills = signalsPresent ? [step.skill] : modelSkills;
-  const outcome = signalsPresent
+  const objectiveCleared = signalsPresent && marathiPresent;
+  const awardedSkills = objectiveCleared ? [step.skill] : modelSkills;
+  const outcome = objectiveCleared
     ? "success"
     : modelOutcome === "success"
       ? "partial"
@@ -612,6 +656,15 @@ export async function evaluateBoliTurn(body: BoliTurnBody): Promise<BoliTurnResp
   const completed = didAdvance && nextStep === mission.steps.length;
   const recast = raw.recast as Record<string, unknown> | undefined;
   const adaptiveFeedback = buildAdaptiveFeedback(raw, step, didAdvance, attemptsBeforeThisTurn);
+  if (!marathiPresent) {
+    adaptiveFeedback.whatWorked = "I understood that you were trying to answer the current situation.";
+    adaptiveFeedback.nextFocus = "Say the same idea again in Marathi. Use the short phrase below to begin.";
+    adaptiveFeedback.keyChunk = {
+      marathi: step.targetPhraseMr,
+      transliteration: step.targetPhraseLatin,
+      meaning: step.targetPhraseEn,
+    };
+  }
   const modelSupport = asSupport(raw.supportRecommendation);
   const supportRecommendation = didAdvance
     ? "none"
@@ -620,12 +673,12 @@ export async function evaluateBoliTurn(body: BoliTurnBody): Promise<BoliTurnResp
       : modelSupport === "none"
         ? "phrase_fragment"
       : modelSupport;
-  const feedbackCode = didAdvance ? "wording" : asErrorCode(
+  const feedbackCode = didAdvance ? "wording" : !marathiPresent ? "mixed_language" : asErrorCode(
     raw.feedbackFocus && typeof raw.feedbackFocus === "object" ? (raw.feedbackFocus as Record<string, unknown>).code : undefined,
     outcome,
     hasAudio
   );
-  const feedbackLabel = didAdvance ? "Objective cleared" : shortText(
+  const feedbackLabel = didAdvance ? "Objective cleared" : !marathiPresent ? "Please answer in Marathi" : shortText(
     raw.feedbackFocus && typeof raw.feedbackFocus === "object" ? (raw.feedbackFocus as Record<string, unknown>).label : undefined,
     ERROR_LABELS[feedbackCode],
     80
@@ -657,11 +710,15 @@ export async function evaluateBoliTurn(body: BoliTurnBody): Promise<BoliTurnResp
     heardMarathi: typeof raw.heardMarathi === "string" ? raw.heardMarathi.slice(0, 300) : "",
     intent: typeof raw.intent === "string" ? raw.intent.slice(0, 80) : "unclear",
     outcome,
-    npcLineMr:
+    npcLineMr: !marathiPresent
+      ? "छान प्रयत्न. आता मराठीत पुन्हा सांगा."
+      :
       typeof raw.npcLineMr === "string" && raw.npcLineMr.trim()
         ? raw.npcLineMr.slice(0, 260)
         : step.npcPromptMr,
-    npcLineEn:
+    npcLineEn: !marathiPresent
+      ? "Good try. Now say it again in Marathi."
+      :
       typeof raw.npcLineEn === "string" && raw.npcLineEn.trim()
         ? raw.npcLineEn.slice(0, 260)
         : step.npcPromptEn,

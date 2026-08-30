@@ -3,7 +3,6 @@
  *
  * Run the production server first, then use:
  *   npm run test:aamchi
- *   AAMCHI_VARIANT=english npm run test:aamchi
  *   AAMCHI_VARIANT=transliteration npm run test:aamchi
  *   AAMCHI_VARIANT=devanagari npm run test:aamchi
  *
@@ -15,17 +14,6 @@ const baseUrl = (process.env.AAMCHI_BOLI_URL || "http://localhost:3010").replace
 const variant = process.env.AAMCHI_VARIANT || "all";
 
 const variants = {
-  english: [
-    ["kj-college-gate", 0, "I need to go to KJ Somaiya College."],
-    ["kj-college-gate", 1, "Yes, main gate please."],
-    ["kj-college-gate", 2, "Thank you Meera Tai."],
-    ["dadar-bus-stop", 0, "Where is the bus to Shivaji Park?"],
-    ["dadar-bus-stop", 1, "The bus stop below the skywalk, right?"],
-    ["dadar-bus-stop", 2, "Thank you, I will go there now."],
-    ["bandra-station-pickup", 0, "I want to go to BKC."],
-    ["bandra-station-pickup", 1, "Main bus stop please."],
-    ["bandra-station-pickup", 2, "Thank you Raju."],
-  ],
   transliteration: [
     ["kj-college-gate", 0, "mala KJ Somaiya college la jayache aahe"],
     ["kj-college-gate", 1, "ho, main gate var utarayache aahe"],
@@ -80,6 +68,25 @@ async function checkPositiveCases(name, cases) {
   }
 }
 
+async function checkNonMarathiCannotAdvance() {
+  const nonMarathiCases = [
+    ["open-world", 0, "hello"],
+    ["open-world", 0, "namaste"],
+    ["open-world", 1, "I can see a beautiful place here"],
+    ["open-world", 1, "mujhe yahan ek sundar jagah dikhti hai"],
+    ["open-world", 2, "Please help me learn Marathi"],
+    ["open-world", 2, "mujhe Marathi seekhne mein madad karo"],
+  ];
+  for (const [missionId, stepIndex, typedResponse] of nonMarathiCases) {
+    const result = await post("/api/aamchi-boli/turn", { missionId, stepIndex, typedResponse, attemptsForStep: 0 });
+    assert(
+      result.status === 200 && result.body.outcome !== "success" && result.body.nextStep === stepIndex && result.body.feedbackFocus?.code === "mixed_language",
+      `language guard: ${JSON.stringify(typedResponse)} is asked again in Marathi`,
+      JSON.stringify({ outcome: result.body.outcome, nextStep: result.body.nextStep, focus: result.body.feedbackFocus })
+    );
+  }
+}
+
 async function checkGuardrailsAndCoaching() {
   const vagueCases = [
     ["kj-college-gate", 0, "yes"], ["kj-college-gate", 1, "yes"], ["kj-college-gate", 2, "okay"],
@@ -127,7 +134,7 @@ async function checkGuardrailsAndCoaching() {
 
 async function checkOpenWorldCompletion() {
   const turns = [
-    [0, "namaste"],
+    [0, "namaskar"],
     [1, "mala ithe ek sundar jaga disate"],
     [2, "mala Marathi shikayachi aahe, madat kara"],
   ];
@@ -159,6 +166,7 @@ async function main() {
   const selected = variant === "all" ? Object.entries(variants) : [[variant, variants[variant]]];
   for (const [name, cases] of selected) await checkPositiveCases(name, cases);
   await checkOpenWorldCompletion();
+  await checkNonMarathiCannotAdvance();
   await checkGuardrailsAndCoaching();
   console.log("\nAamchi Boli language acceptance checks passed.");
 }

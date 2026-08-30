@@ -2,7 +2,7 @@
 
 ## One sentence
 
-Aamchi Boli is a voice-first Marathi learning RPG where learners practise real communication inside Mumbai presets or a world they invent, while Gemini interprets speech, teaches one useful correction, and advances the game only when the intended meaning is clear.
+Aamchi Boli is a voice-first Marathi learning RPG where learners practise real communication inside Mumbai presets or a world they invent, while Gemini interprets speech, teaches one useful correction, and advances the game only when the learner says the needed meaning in Marathi.
 
 ## Safe demo setup
 
@@ -25,7 +25,7 @@ The custom world has three short tasks. Use voice first. The typed versions are 
 - Transliteration: `Namaskar!`
 - Meaning: `Hello!`
 
-`नमस्ते` or `Namaste` also passes.
+Use `नमस्कार` or `Namaskar` in the demo. English and Hindi are intentionally not accepted as completed Marathi practice.
 
 ### Task 2: say what you see
 
@@ -57,7 +57,7 @@ Say:
 
 Say:
 
-> Aamchi Boli turns practical Marathi into a small role-playing game. You walk through a scene, approach a character, hear Marathi, and answer by voice. Gemini checks communicative meaning rather than accent or perfect grammar. A correct answer moves the quest forward. A wrong answer stays on the same task and unlocks one small correction.
+> Aamchi Boli turns practical Marathi into a small role-playing game. You walk through a scene, approach a character, hear Marathi, and answer by voice. Gemini checks communicative meaning in Marathi rather than accent or perfect grammar. An English or Hindi answer is respectfully flagged and does not clear the task. A correct Marathi answer moves the quest forward. A wrong answer stays on the same task and unlocks one small correction.
 
 ### 1:20 to 2:10: show the worlds
 
@@ -79,7 +79,7 @@ Say:
 2. Show the full creation screen.
 3. Walk to the Boli Guide with WASD or arrows.
 4. Press E or use Talk.
-5. First say `yes` to demonstrate that a vague answer does not advance.
+5. First say `Hello, I need help` to demonstrate that English does not advance a Marathi practice task.
 6. Say `नमस्कार` to clear task 1.
 7. Read the generated world phrase for task 2.
 8. Say `मला मराठी शिकायची आहे. मदत करा.` for task 3.
@@ -87,13 +87,13 @@ Say:
 
 While demonstrating the failed answer, say:
 
-> Notice that the quest remains at zero. Gemini explains what it understood, names one missing detail, and gives the smallest useful Marathi chunk. The code-owned objective guard prevents a generous model response from skipping the task.
+> Notice that the quest remains at zero. Gemini explains that Marathi practice is needed, gives the smallest useful Marathi chunk, and asks for another try. The code-owned objective guard prevents a generous model response from skipping the task.
 
 ### 4:30 to 5:40: explain the learning design
 
 Say:
 
-> The learning loop is deliberately short: listen, respond, get one correction, retry, then recall it later. We track independent success separately from guided recovery. A missed phrase enters a memory queue only after the learner advances, so review never blocks the main story. We never score accent or identity.
+> The learning loop is deliberately short: listen, produce Marathi, get one correction, retry, then recall it later. We track independent success separately from guided recovery. A missed phrase enters a memory queue only after the learner advances, so review never blocks the main story. We never score accent or identity.
 
 Show:
 
@@ -162,7 +162,7 @@ Gemini receives raw audio together with the exact scene, NPC line, current objec
 
 ### How do you prevent Gemini from accepting everything?
 
-Gemini proposes the assessment, but deterministic objective signals control progression. For example, the KJ destination task must contain Somaiya, and the gate confirmation must contain both agreement and gate. A vague `yes` cannot advance. The server can advance at most one bounded step.
+Gemini proposes the assessment, but deterministic objective signals and a Marathi-production guard control progression. For example, the KJ destination task must contain Somaiya in Marathi or Marathi transliteration, and the gate confirmation must contain both agreement and gate. An English or Hindi answer, or a vague `yes`, cannot advance. The server can advance at most one bounded step.
 
 ### What is generated live?
 
@@ -183,4 +183,3 @@ Preset missions remain playable. A custom generation failure returns the learner
 ### Why no login or database?
 
 This prototype is designed for a quick, private practice session. Progress and best mastery are stored locally. Raw recordings are sent for the current assessment and are not stored by the app.
-

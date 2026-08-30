@@ -893,11 +893,14 @@ export function AamchiBoli() {
             <article className="mt-4 rounded-base border-2 border-black bg-white p-3 shadow-shadow">
               <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-inksoft">Can-do map</p>
               {mission.steps.map((item, index) => {
-                const complete = index < stepIndex;
+                const progress = learning[stepLearningKey(index)] ?? emptyStepProgress();
+                const complete = progress.cleared;
+                const currentGoal = !complete && index === stepIndex;
                 return (
-                  <div key={`${item.skill}-${index}`} className="mt-3 flex items-center gap-2 text-sm font-semibold">
+                  <div key={`${item.skill}-${index}`} className={`mt-3 flex items-center gap-2 rounded-base p-2 text-sm font-semibold ${complete ? "bg-[#d9ff83]" : currentGoal ? "border-2 border-black bg-main/25" : ""}`}>
                     <CheckCircle2 size={16} className={complete ? "text-green-700" : "text-inksoft"} />
-                    <span className={complete ? "" : "text-inksoft"}>{item.objective}</span>
+                    <span className={complete ? "" : currentGoal ? "text-black" : "text-inksoft"}>{item.objective}</span>
+                    <span className="ml-auto shrink-0 text-[9px] font-black uppercase tracking-wider">{complete ? "Done" : currentGoal ? "Now" : "Next"}</span>
                   </div>
                 );
               })}
@@ -1024,6 +1027,9 @@ export function AamchiBoli() {
                     {activeTurn && (
                       <article className="rounded-base border-2 border-black bg-[#d9ff83] p-4 text-black shadow-shadow">
                         <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-inksoft">Quick coach · {activeTurn.outcome === "success" ? "clear" : `retry ${activeTurn.adaptiveFeedback.level}/2`}</p>
+                        {activeTurn.feedbackFocus?.code === "mixed_language" && (
+                          <p className="mt-2 rounded-base border-2 border-black bg-[#ffd3ca] p-2 text-sm font-black">Marathi practice needed. English or Hindi can help you understand, but only Marathi clears this task.</p>
+                        )}
                         <p className="mt-1 font-bold">{activeTurn.adaptiveFeedback.whatWorked}</p>
                         {activeTurn.outcome !== "success" && (
                           <div className="mt-3 rounded-base border-2 border-black/15 bg-white/70 p-3">
