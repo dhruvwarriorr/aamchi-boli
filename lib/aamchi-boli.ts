@@ -249,6 +249,7 @@ export async function generateBoliOmniWorld(mission: BoliMission, userPrompt: st
   };
   let directorText = "";
   let directorModel = BOLI_OMNI_MODEL;
+  let directorFallback = false;
   try {
     // Omni has a separate Interactions endpoint. It does not support explicit
     // cached content yet, so `omniWorldCache` below deduplicates the complete
@@ -264,16 +265,25 @@ export async function generateBoliOmniWorld(mission: BoliMission, userPrompt: st
     // Keep the feature demoable when Omni is not enabled on the current key.
     console.warn("[AamchiBoli] Omni model unavailable; using fast Gemini fallback", error instanceof Error ? error.message : error);
     directorModel = BOLI_SCORING_MODEL;
-    const response = await generateContentWithRetry({
-      model: BOLI_SCORING_MODEL,
-      contents: [{ text: `${staticContext}\n\nLIVE PLAYER PROMPT: ${cleanPrompt}` }],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: schema,
-        temperature: 0.8,
-      },
-    });
-    directorText = response.text || "";
+    try {
+      const response = await generateContentWithRetry({
+        model: BOLI_SCORING_MODEL,
+        contents: [{ text: `${staticContext}\n\nLIVE PLAYER PROMPT: ${cleanPrompt}` }],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: schema,
+          temperature: 0.8,
+        },
+      });
+      directorText = response.text || "";
+    } catch (fallbackError) {
+      // A missing key, disabled Omni quota, or a transient Vercel network
+      // error must not strand a learner in the builder. The prompt is still a
+      // useful world title and the code-owned Marathi quest remains playable.
+      console.error("[AamchiBoli] live-world director unavailable; using local scenario", fallbackError);
+      directorModel = "local-fallback";
+      directorFallback = true;
+    }
   }
   let scene = cleanPrompt;
   let learningMoment = "Use the scene as a speaking cue, not a new quiz.";
@@ -305,16 +315,25 @@ export async function generateBoliOmniWorld(mission: BoliMission, userPrompt: st
     BOLI_STYLE_BIBLE,
     null
   );
-  if (image.fallback) throw new BoliError(`Nano Banana could not render this live world variation. ${image.failureReason ?? ""}`.trim(), 503);
+  const usePlayableFallback = image.fallback;
+  if (usePlayableFallback) directorFallback = true;
   const result: BoliOmniWorldResponse = {
     missionId: mission.id,
     prompt: cleanPrompt,
     learningMoment,
     scenePhrase,
-    image: toDataUrl(image.b64, image.mimeType),
+    // A real map asset keeps movement, hotspots, and learning available when
+    // image quota or a serverless request times out. Never return the tiny
+    // transparent placeholder from generateImage as a "world".
+    image: usePlayableFallback ? "/aamchi-boli/maps/dadar-bus-stop.jpg" : toDataUrl(image.b64, image.mimeType),
     cacheHit: false,
     model: directorModel,
-    fallback: false,
+    fallback: directorFallback,
+    visualFallbackReason: usePlayableFallback
+      ? "Live map art is temporarily unavailable, so this world opened with a playable demo map."
+      : directorModel === "local-fallback"
+        ? "The live director is temporarily unavailable, so this world opened with a safe local scenario."
+        : undefined,
   };
   omniWorldCache.set(key, { expiresAt: Date.now() + 900_000, result });
   if (omniWorldCache.size > 8) omniWorldCache.delete(omniWorldCache.keys().next().value as string);

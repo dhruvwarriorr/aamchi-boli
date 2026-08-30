@@ -294,6 +294,8 @@ export type BoliOmniWorldResponse = {
   cacheHit: boolean;
   model: string;
   fallback: boolean;
+  /** A non-blocking explanation when the playable backup map was used. */
+  visualFallbackReason?: string;
 };
 
 /** Audio response from the Gemini Marathi TTS endpoint. */

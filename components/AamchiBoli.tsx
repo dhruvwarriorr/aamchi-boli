@@ -928,6 +928,12 @@ export function AamchiBoli() {
           </aside>
         )}
 
+        {liveWorld?.visualFallbackReason && (
+          <p className="absolute left-4 right-4 top-[92px] z-20 mx-auto max-w-xl rounded-base border-2 border-black bg-[#ffe8a8] px-3 py-2 text-center text-xs font-bold text-black shadow-shadow sm:top-[82px]">
+            {liveWorld.visualFallbackReason}
+          </p>
+        )}
+
         <section className="relative flex min-h-[21dvh] flex-1 items-end px-4 pb-4 sm:min-h-[27dvh] sm:px-6 sm:pb-6">
           {loadingMap ? null : completed ? (
             <div className="max-w-xl rounded-base border-2 border-black bg-[#d9ff83] p-4 text-black shadow-shadow">
