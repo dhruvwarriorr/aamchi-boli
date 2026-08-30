@@ -1027,6 +1027,18 @@ export function AamchiBoli() {
                     {activeTurn && (
                       <article className="rounded-base border-2 border-black bg-[#d9ff83] p-4 text-black shadow-shadow">
                         <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-inksoft">Quick coach · {activeTurn.outcome === "success" ? "clear" : `retry ${activeTurn.adaptiveFeedback.level}/2`}</p>
+                        {activeTurn.inputMode === "voice" && (
+                          <div className="mt-3 rounded-base border-2 border-black bg-white/80 p-3">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-inksoft">Gemini heard you say</p>
+                            <p className="mt-1 font-bold leading-snug">{activeTurn.transcript || "I could not make out a clear phrase."}</p>
+                            {activeTurn.heardMarathi && activeTurn.heardMarathi !== activeTurn.transcript && (
+                              <p className="mt-1 text-sm font-semibold text-inksoft">Marathi reading: {activeTurn.heardMarathi}</p>
+                            )}
+                            {!activeTurn.transcript && (
+                              <p className="mt-2 text-xs font-bold text-[#a02714]">Try again a little closer to the microphone. Unclear audio never counts as a language mistake.</p>
+                            )}
+                          </div>
+                        )}
                         {activeTurn.feedbackFocus?.code === "mixed_language" && (
                           <p className="mt-2 rounded-base border-2 border-black bg-[#ffd3ca] p-2 text-sm font-black">Marathi practice needed. English or Hindi can help you understand, but only Marathi clears this task.</p>
                         )}

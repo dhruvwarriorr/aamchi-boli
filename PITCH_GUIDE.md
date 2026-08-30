@@ -85,6 +85,8 @@ Say:
 8. Say `मला मराठी शिकायची आहे. मदत करा.` for task 3.
 9. Show 100% completion and the Learning drawer.
 
+After any voice response, point to the **Gemini heard you say** card. It shows the actual transcript used for coaching. If audio is unclear, the app asks for a closer retry and does not treat unclear sound as a language error.
+
 While demonstrating the failed answer, say:
 
 > Notice that the quest remains at zero. Gemini explains that Marathi practice is needed, gives the smallest useful Marathi chunk, and asks for another try. The code-owned objective guard prevents a generous model response from skipping the task.
@@ -107,7 +109,7 @@ Show:
 
 Say:
 
-> Gemini is not a decorative chatbot here. It is used at five points. First, Omni directs custom worlds and writes one scene-grounded Marathi phrase. Second, Nano Banana paints the playable map. Third, Gemini receives the actual audio and returns a structured assessment with transcript, intent, coaching, and NPC reply. Fourth, Gemini native audio speaks Marathi slowly or naturally. Fifth, Nano Banana creates an earned completion frame. The fixed curriculum is cached, while deterministic code owns collisions, objectives, progression, metrics, and validation.
+> Gemini is not a decorative chatbot here. It is used at five points. First, Omni directs custom worlds and writes one scene-grounded Marathi phrase. Second, Nano Banana paints the playable map. Third, Gemini receives the actual audio and returns a structured assessment with transcript, intent, coaching, and NPC reply. The visible transcript lets the learner verify what Gemini heard. Fourth, Gemini native audio speaks Marathi slowly or naturally. Fifth, Nano Banana creates an earned completion frame. The fixed curriculum is cached, while deterministic code owns collisions, objectives, progression, metrics, and validation.
 
 ### 6:40 to 7:00: close
 
