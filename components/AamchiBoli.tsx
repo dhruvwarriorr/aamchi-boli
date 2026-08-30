@@ -225,6 +225,8 @@ export function AamchiBoli() {
   const questProgress = mission?.steps.length ? Math.round((stepIndex / mission.steps.length) * 100) : 0;
   const learningSummary = summarizeLearning(mission, learning);
   const activeReview = reviewQueue.find((item) => item.id === reviewingItemId) ?? null;
+  const availableReview = reviewQueue.find((item) => item.sourceStepIndex < stepIndex) ?? null;
+  const scenePhrase = mission?.id === BOLI_OPEN_WORLD_MISSION.id && stepIndex === 1 ? liveWorld?.scenePhrase : undefined;
   const conversationStep = activeReview && mission ? mission.steps[activeReview.sourceStepIndex] : step;
   const activeTurn = turn && turnStepIndex !== null && (turnStepIndex === stepIndex || turnStepIndex === activeReview?.sourceStepIndex) ? turn : null;
   const recentlyClearedTurn = turn && turnStepIndex !== null && turnStepIndex < stepIndex ? turn : null;
@@ -246,7 +248,14 @@ export function AamchiBoli() {
         setLiveWorld(data);
       }
     } catch (cause) {
-      if (sessionId === missionSessionRef.current) setError(cause instanceof Error ? cause.message : "The live world variation could not be rendered.");
+      if (sessionId === missionSessionRef.current) {
+        setError(cause instanceof Error ? cause.message : "The live world variation could not be rendered.");
+        if (missionToGenerate.id === BOLI_OPEN_WORLD_MISSION.id) {
+          setOpeningPrompt(cleanPrompt);
+          setSelectedMissionId(null);
+          setView("choose-mission");
+        }
+      }
     } finally {
       if (sessionId === missionSessionRef.current) {
         setGeneratingWorld(false);
@@ -458,7 +467,7 @@ export function AamchiBoli() {
       return;
     }
     // `recording` only flips true after the permission await, so without this
-    // ref a second click acquires a second stream and orphans the first —
+    // ref a second click acquires a second stream and orphans the first.
     // leaving the browser mic indicator lit until the tab closes.
     if (acquiringMicRef.current || recorderRef.current) return;
     acquiringMicRef.current = true;
@@ -599,7 +608,6 @@ export function AamchiBoli() {
     setTurn(null);
     setTurnStepIndex(null);
     setReaction(null);
-    setLiveWorld(null);
     setLoadingReaction(false);
     setTypedResponse("");
     setShowHint(false);
@@ -609,7 +617,10 @@ export function AamchiBoli() {
     setReviewingItemId(null);
     setError(null);
     commitLearning(freshLearningState(mission));
-    if (!preserveMap) setMap(null);
+    if (!preserveMap) {
+      setMap(null);
+      setLiveWorld(null);
+    }
   };
 
   const openRoutePicker = () => {
@@ -655,7 +666,7 @@ export function AamchiBoli() {
           <header className="mb-8 border-b-2 border-[#fff6dd]/45 pb-6">
             <p className="mb-2 text-xs font-bold uppercase tracking-[0.22em] text-main">Language comes alive</p>
             <h1 className="font-display text-5xl font-extrabold tracking-tight sm:text-7xl">Aamchi Boli</h1>
-            <p className="mt-3 max-w-2xl text-lg font-semibold text-[#fff6dd]/82">Walk through ready-made stories or invent a new world, then learn Marathi by speaking—not flashcards.</p>
+            <p className="mt-3 max-w-2xl text-lg font-semibold text-[#fff6dd]/82">Walk through ready-made stories or invent a new world, then learn Marathi by speaking, not flashcards.</p>
           </header>
 
           <form
@@ -768,6 +779,7 @@ export function AamchiBoli() {
               aria-label="Describe the world Gemini should paint"
               className="mt-4 min-h-24 resize-none bg-white"
             />
+            {error && <p className="mt-3 rounded-base border-2 border-black bg-[#ffd3ca] px-3 py-2 text-sm font-bold">{error}</p>}
             <div className="mt-3 flex justify-end">
               <Button type="submit" size="lg" disabled={!openingPrompt.trim()}>
                 Build this world <Sparkles />
@@ -803,7 +815,7 @@ export function AamchiBoli() {
           <BoliWorldCanvas
             key={mission.id}
             mission={mission}
-            imageSrc={liveWorld?.image ?? reaction?.image ?? map?.image}
+            imageSrc={reaction?.image ?? liveWorld?.image ?? map?.image}
             characterName={playerName}
             paused={conversationUnlocked || thinking || recording || showLearningPanel || loadingMap}
             completed={completed}
@@ -980,12 +992,24 @@ export function AamchiBoli() {
                       </article>
                     )}
 
-                    {!activeReview && reviewQueue.length > 0 && (
+                    {!activeReview && scenePhrase && (
+                      <article className="rounded-base border-2 border-black bg-[#ffe8a8] p-4 text-black shadow-shadow">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-inksoft">A phrase from your world</p>
+                        <p className="mt-1 text-xl font-bold">{scenePhrase.marathi}</p>
+                        <p className="mt-1 text-sm italic text-inksoft">{scenePhrase.transliteration}</p>
+                        <p className="mt-1 text-sm font-semibold">{scenePhrase.meaning}</p>
+                        <Button variant="neutral" size="sm" className="mt-3" disabled={speaking} onClick={() => void speakNpc(scenePhrase.marathi, true)}>
+                          <Volume2 size={15} /> {speaking ? "Speaking…" : "Hear this slowly"}
+                        </Button>
+                      </article>
+                    )}
+
+                    {!activeReview && availableReview && (
                       <article className="rounded-base border-2 border-black bg-[#ffe8a8] p-4 text-black shadow-shadow">
                         <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-inksoft">Remember this · optional checkpoint</p>
                         <p className="mt-1 font-bold">One earlier phrase is ready for a quick recall.</p>
                         <p className="mt-1 text-sm font-semibold">It will not block the next quest objective.</p>
-                        <Button variant="neutral" size="sm" className="mt-3" onClick={() => setReviewingItemId(reviewQueue[0].id)}>Practice memory</Button>
+                        <Button variant="neutral" size="sm" className="mt-3" onClick={() => setReviewingItemId(availableReview.id)}>Practice memory</Button>
                       </article>
                     )}
 
@@ -1005,11 +1029,15 @@ export function AamchiBoli() {
                           <div className="mt-3 rounded-base border-2 border-black/15 bg-white/70 p-3">
                             <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-inksoft">One small change</p>
                             <p className="mt-1 text-sm font-semibold">{activeTurn.adaptiveFeedback.nextFocus}</p>
-                            <p className="mt-3 font-bold">{activeTurn.adaptiveFeedback.keyChunk.marathi}</p>
-                            <p className="text-sm italic text-inksoft">{activeTurn.adaptiveFeedback.keyChunk.transliteration} · {activeTurn.adaptiveFeedback.keyChunk.meaning}</p>
-                            <Button variant="neutral" size="sm" className="mt-3" disabled={speaking} onClick={() => void speakNpc(activeTurn.adaptiveFeedback.keyChunk.marathi, true)}>
-                              <Volume2 size={15} /> {speaking ? "Speaking…" : "Hear slowly"}
-                            </Button>
+                            {showHint && (
+                              <div className="mt-3 border-t-2 border-black/15 pt-3">
+                                <p className="font-bold">{activeTurn.adaptiveFeedback.keyChunk.marathi}</p>
+                                <p className="text-sm italic text-inksoft">{activeTurn.adaptiveFeedback.keyChunk.transliteration} · {activeTurn.adaptiveFeedback.keyChunk.meaning}</p>
+                                <Button variant="neutral" size="sm" className="mt-3" disabled={speaking} onClick={() => void speakNpc(activeTurn.adaptiveFeedback.keyChunk.marathi, true)}>
+                                  <Volume2 size={15} /> {speaking ? "Speaking…" : "Hear slowly"}
+                                </Button>
+                              </div>
+                            )}
                           </div>
                         )}
                         <p className="mt-3 text-base font-bold leading-snug">{activeTurn.npcLineMr}</p>
@@ -1020,9 +1048,9 @@ export function AamchiBoli() {
                     {showHint && !activeTurn && (
                       <article className="rounded-base border-2 border-black bg-main p-4 text-black shadow-shadow">
                         <p className="text-xs font-bold uppercase tracking-[0.14em]">Optional phrase support</p>
-                        <p className="mt-1 font-bold">{step.targetPhraseMr}</p>
-                        <p className="mt-1 text-sm italic">{step.targetPhraseLatin}</p>
-                        <p className="mt-1 text-sm">{step.targetPhraseEn}</p>
+                        <p className="mt-1 font-bold">{scenePhrase?.marathi ?? step.targetPhraseMr}</p>
+                        <p className="mt-1 text-sm italic">{scenePhrase?.transliteration ?? step.targetPhraseLatin}</p>
+                        <p className="mt-1 text-sm">{scenePhrase?.meaning ?? step.targetPhraseEn}</p>
                         <p className="mt-2 text-xs font-semibold">This counts as supported practice, not an independent first try.</p>
                       </article>
                     )}
@@ -1079,7 +1107,7 @@ export function AamchiBoli() {
                       placeholder="Type Marathi / transliteration"
                       disabled={thinking || recording}
                     />
-                    <Button type="submit" size="icon" disabled={thinking || recording || !typedResponse.trim()}><Send /></Button>
+                    <Button type="submit" size="icon" aria-label="Send typed answer" disabled={thinking || recording || !typedResponse.trim()}><Send /></Button>
                   </form>
                   <button
                     type="button"

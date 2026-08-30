@@ -284,6 +284,12 @@ export type BoliOmniWorldResponse = {
   prompt: string;
   /** One short, judge-friendly teaching cue returned by the scene director. */
   learningMoment?: string;
+  /** One useful Marathi sentence grounded in a visible part of the generated world. */
+  scenePhrase?: {
+    marathi: string;
+    transliteration: string;
+    meaning: string;
+  };
   image: string;
   cacheHit: boolean;
   model: string;

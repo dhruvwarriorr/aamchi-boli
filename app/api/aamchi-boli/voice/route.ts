@@ -5,7 +5,7 @@ import { synthesizeSarvamSpeech } from "@/lib/sarvam";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-/** POST `/api/aamchi-boli/voice` — synthesize an NPC's Marathi dialogue with Gemini TTS. */
+/** POST `/api/aamchi-boli/voice`: synthesize an NPC's Marathi dialogue with Gemini TTS. */
 export async function POST(req: NextRequest) {
   let body: { text?: string; role?: string; language?: string; slow?: boolean };
   try {

@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 // Image generation alone runs ~10-20s; the retry ladder needs room beyond that.
 export const maxDuration = 120;
 
-/** POST `/api/aamchi-boli/reaction` — render an earned Nano Banana mission vignette. */
+/** POST `/api/aamchi-boli/reaction`: render an earned Nano Banana mission vignette. */
 export async function POST(req: NextRequest) {
   let body: {
     missionId?: string;

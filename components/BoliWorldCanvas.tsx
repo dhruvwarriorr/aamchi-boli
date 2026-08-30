@@ -167,6 +167,24 @@ export function BoliWorldCanvas({
       if (axis) {
         event.preventDefault();
         keysRef.current.add(axis);
+        if (!event.repeat) {
+          const current = playerRef.current;
+          const dx = axis === "left" ? -1 : axis === "right" ? 1 : 0;
+          const dy = axis === "up" ? -1 : axis === "down" ? 1 : 0;
+          const nextX = clamp(current.x + dx * 1.2, MIN_X, MAX_X);
+          const nextY = clamp(current.y + dy * 1.2, MIN_Y, MAX_Y);
+          const resolvedX = canStand(nextX, current.y, missionRef.current) ? nextX : current.x;
+          const resolvedY = canStand(resolvedX, nextY, missionRef.current) ? nextY : current.y;
+          const next = {
+            x: resolvedX,
+            y: resolvedY,
+            direction: axis,
+            isMoving: resolvedX !== current.x || resolvedY !== current.y,
+          };
+          playerRef.current = next;
+          setPlayer(next);
+          onPositionRef.current?.(next);
+        }
       } else if ((key === "e" || key === "enter") && !event.repeat) {
         event.preventDefault();
         interact();

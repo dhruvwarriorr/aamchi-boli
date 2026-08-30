@@ -8,7 +8,7 @@ export const maxDuration = 60;
 /** Roughly 1.8 MB of binary audio once base64 decoding is accounted for. */
 const MAX_AUDIO_BASE64 = 2_500_000;
 
-/** POST `/api/aamchi-boli/turn` — score one spoken or typed Marathi RPG response. */
+/** POST `/api/aamchi-boli/turn`: score one spoken or typed Marathi RPG response. */
 export async function POST(req: NextRequest) {
   let body: BoliTurnBody;
   try {

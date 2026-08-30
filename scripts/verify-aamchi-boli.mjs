@@ -51,7 +51,7 @@ const variants = {
 };
 
 function assert(condition, label, details = "") {
-  if (!condition) throw new Error(`${label}${details ? ` — ${details}` : ""}`);
+  if (!condition) throw new Error(`${label}${details ? `: ${details}` : ""}`);
   console.log(`✓ ${label}`);
 }
 
@@ -73,7 +73,7 @@ async function checkPositiveCases(name, cases) {
       attemptsForStep: 0,
     });
     assert(
-      result.status === 200 && result.body.outcome === "success" && result.body.nextStep === stepIndex + 1,
+      result.status === 200 && result.body.outcome === "success" && result.body.nextStep === stepIndex + 1 && result.body.completed === (stepIndex === 2),
       `${name}: ${missionId} step ${stepIndex + 1} advances exactly once`,
       JSON.stringify({ status: result.status, outcome: result.body.outcome, nextStep: result.body.nextStep })
     );
@@ -125,10 +125,40 @@ async function checkGuardrailsAndCoaching() {
   assert(empty.status === 400, "validation: empty response is rejected", `HTTP ${empty.status}`);
 }
 
+async function checkOpenWorldCompletion() {
+  const turns = [
+    [0, "namaste"],
+    [1, "mala ithe ek sundar jaga disate"],
+    [2, "mala Marathi shikayachi aahe, madat kara"],
+  ];
+  for (const [stepIndex, typedResponse] of turns) {
+    const result = await post("/api/aamchi-boli/turn", {
+      missionId: "open-world",
+      stepIndex,
+      typedResponse,
+      attemptsForStep: 0,
+    });
+    assert(
+      result.status === 200 && result.body.outcome === "success" && result.body.nextStep === stepIndex + 1 && result.body.completed === (stepIndex === 2),
+      `custom world: task ${stepIndex + 1} advances and reports completion correctly`,
+      JSON.stringify({ status: result.status, outcome: result.body.outcome, nextStep: result.body.nextStep, completed: result.body.completed })
+    );
+  }
+
+  const vague = await post("/api/aamchi-boli/turn", {
+    missionId: "open-world",
+    stepIndex: 0,
+    typedResponse: "yes",
+    attemptsForStep: 0,
+  });
+  assert(vague.status === 200 && vague.body.outcome !== "success" && vague.body.nextStep === 0, "custom world: vague greeting cannot advance");
+}
+
 async function main() {
   assert(Object.hasOwn(variants, variant) || variant === "all", "test variant is valid", variant);
   const selected = variant === "all" ? Object.entries(variants) : [[variant, variants[variant]]];
   for (const [name, cases] of selected) await checkPositiveCases(name, cases);
+  await checkOpenWorldCompletion();
   await checkGuardrailsAndCoaching();
   console.log("\nAamchi Boli language acceptance checks passed.");
 }

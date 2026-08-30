@@ -3,7 +3,7 @@
  * Prefer `client.ts` or `server.ts` when a type is layer-specific.
  */
 
-/** Premise card / world metadata — used in bible, API payloads, and UI. */
+/** Premise card / world metadata used in bible, API payloads, and UI. */
 export type Premise = {
   id: string;
   title: string;
@@ -25,7 +25,7 @@ export type Premise = {
 };
 
 /* ------------------------------------------------------------------ */
-/* Aamchi Boli — fixed, real-world Marathi learning missions           */
+/* Aamchi Boli: fixed, real-world Marathi learning missions           */
 /* ------------------------------------------------------------------ */
 
 /** Skill evidence awarded by a Marathi practice turn. */
@@ -103,7 +103,7 @@ export type BoliMission = {
    * these, which keeps them on pavement and out of walls, buildings, and sky.
    */
   walkable: BoliWorldRect[];
-  /** Solid props inside the walkable ground — vehicles, stalls, railings. */
+  /** Solid props inside the walkable ground, such as vehicles, stalls, and railings. */
   blockers?: BoliWorldRect[];
   /** Talkable NPCs and visible landmarks that anchor the RPG route. */
   mapHotspots: BoliMapHotspot[];

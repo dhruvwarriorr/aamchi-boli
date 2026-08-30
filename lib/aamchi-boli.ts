@@ -225,8 +225,17 @@ export async function generateBoliOmniWorld(mission: BoliMission, userPrompt: st
     properties: {
       scene: { type: Type.STRING },
       learningMoment: { type: Type.STRING },
+      scenePhrase: {
+        type: Type.OBJECT,
+        properties: {
+          marathi: { type: Type.STRING },
+          transliteration: { type: Type.STRING },
+          meaning: { type: Type.STRING },
+        },
+        required: ["marathi", "transliteration", "meaning"],
+      },
     },
-    required: ["scene", "learningMoment"],
+    required: ["scene", "learningMoment", "scenePhrase"],
   };
   let directorText = "";
   let directorModel = BOLI_OMNI_MODEL;
@@ -236,7 +245,7 @@ export async function generateBoliOmniWorld(mission: BoliMission, userPrompt: st
     // prompt → scene → image result for fifteen minutes instead.
     const interaction = await generateInteractionWithRetry({
       model: BOLI_OMNI_MODEL,
-      input: `${staticContext}\n\nLIVE PLAYER PROMPT: ${cleanPrompt}\nReturn JSON only: {"scene":"...","learningMoment":"..."}. learningMoment must be one short speaking cue, never a new quiz.`,
+      input: `${staticContext}\n\nLIVE PLAYER PROMPT: ${cleanPrompt}\nReturn JSON only with scene, learningMoment, and scenePhrase. scenePhrase must be one short beginner Marathi sentence about a concrete thing visible in this exact scene, with Marathi, Latin transliteration, and English meaning. Use a natural form of दिसते or दिसतात so it satisfies the sight objective.`,
       response_modalities: ["text"],
     });
     directorText = "output_text" in interaction ? interaction.output_text || "" : "";
@@ -258,10 +267,25 @@ export async function generateBoliOmniWorld(mission: BoliMission, userPrompt: st
   }
   let scene = cleanPrompt;
   let learningMoment = "Use the scene as a speaking cue, not a new quiz.";
+  let scenePhrase = {
+    marathi: "मला इथे एक सुंदर जागा दिसते.",
+    transliteration: "Mala ithe ek sundar jaga disate.",
+    meaning: "I can see a beautiful place here.",
+  };
   try {
-    const parsed = JSON.parse(directorText) as { scene?: unknown; learningMoment?: unknown };
+    const parsed = JSON.parse(directorText) as { scene?: unknown; learningMoment?: unknown; scenePhrase?: unknown };
     if (typeof parsed.scene === "string" && parsed.scene.trim()) scene = parsed.scene.trim().slice(0, 700);
     if (typeof parsed.learningMoment === "string" && parsed.learningMoment.trim()) learningMoment = parsed.learningMoment.trim().slice(0, 240);
+    if (parsed.scenePhrase && typeof parsed.scenePhrase === "object") {
+      const phrase = parsed.scenePhrase as Record<string, unknown>;
+      if (typeof phrase.marathi === "string" && typeof phrase.transliteration === "string" && typeof phrase.meaning === "string") {
+        scenePhrase = {
+          marathi: phrase.marathi.trim().slice(0, 180),
+          transliteration: phrase.transliteration.trim().slice(0, 180),
+          meaning: phrase.meaning.trim().slice(0, 180),
+        };
+      }
+    }
   } catch {
     // The visual still gets a safe, code-owned prompt if the director returned prose.
   }
@@ -275,6 +299,7 @@ export async function generateBoliOmniWorld(mission: BoliMission, userPrompt: st
     missionId: mission.id,
     prompt: cleanPrompt,
     learningMoment,
+    scenePhrase,
     image: toDataUrl(image.b64, image.mimeType),
     cacheHit: false,
     model: directorModel,
@@ -369,7 +394,7 @@ function objectiveSignals(missionId: string, stepIndex: number, utterance: strin
   if (missionId === "bandra-station-pickup" && stepIndex === 0) return has(/\bbkc\b|बीकेसी/);
   if (missionId === "bandra-station-pickup" && stepIndex === 1) return has(/bus|बस/) && has(/thamb|थांब|stop|stand/);
   if (missionId === "bandra-station-pickup" && stepIndex === 2) return has(/dhany|thanks|thank you|धन्यवाद|आभारी/);
-  if (missionId === "open-world" && stepIndex === 0) return has(/namaskar|नमस्कार/);
+  if (missionId === "open-world" && stepIndex === 0) return has(/namaskar|namaste|नमस्कार|नमस्ते|नमश्कार|नमसकार/);
   if (missionId === "open-world" && stepIndex === 1) return has(/disat|diste|dist|दिसत|दिसते/);
   if (missionId === "open-world" && stepIndex === 2) return has(/marathi|मराठी|madat|मदत|shik|शिक/);
   return true;
@@ -576,8 +601,8 @@ export async function evaluateBoliTurn(body: BoliTurnBody): Promise<BoliTurnResp
   // destination/landmark/action signal for this exact objective. Once that
   // signal is present, code-owned curriculum rules can safely grant one step
   // even when Gemini labelled a short beginner answer as partial.
-  const awardedSkills = signalsPresent && modelOutcome !== "hint_needed" ? [step.skill] : modelSkills;
-  const outcome = signalsPresent && modelOutcome !== "hint_needed"
+  const awardedSkills = signalsPresent ? [step.skill] : modelSkills;
+  const outcome = signalsPresent
     ? "success"
     : modelOutcome === "success"
       ? "partial"

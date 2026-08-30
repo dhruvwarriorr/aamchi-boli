@@ -1,4 +1,4 @@
-# Aamchi Boli — Project Handoff for Claude
+# Aamchi Boli: Project Handoff for Claude
 
 ## Read this first
 
@@ -33,7 +33,7 @@ The judging rubric emphasizes:
 
 People moving to Mumbai may know a few Marathi words, but can still freeze during a real interaction: naming an auto destination, confirming a landmark, asking for directions, or serving a passenger respectfully. Flashcards and generic translation bots do not test whether the listener actually understood their practical intent.
 
-**Aamchi Boli** gives learners a safe, situated rehearsal of these moments. It rewards being understood, politely repairing misunderstandings, and trying again—not producing perfect grammar or adopting a specific accent.
+**Aamchi Boli** gives learners a safe, situated rehearsal of these moments. It rewards being understood, politely repairing misunderstandings, and trying again, not producing perfect grammar or adopting a specific accent.
 
 ### Strong Gemini story for judges
 
@@ -54,7 +54,7 @@ People moving to Mumbai may know a few Marathi words, but can still freeze durin
 
 - Project name: **Aamchi Boli**.
 - No auth or login in the hackathon prototype.
-- Full-screen, Kahani-like RPG feel—not a conventional dashboard.
+- Full-screen, Kahani-like RPG feel, not a conventional dashboard.
 - The user should be able to learn through **voice in Marathi**, with typed Marathi/transliteration as an accessibility/demo fallback.
 - The learner knows English, so English meaning and Latin transliteration are useful scaffolds.
 - Keep the scope polished and credible for a short hackathon build. Do not add a database or broad account system unless explicitly asked.
@@ -322,13 +322,13 @@ These were tested against the locally configured Gemini key during the previous 
 
 ## Remaining work, in priority order
 
-### P0 — finish / verify before demo
+### P0: finish / verify before demo
 
 1. **Run the browser QA checklist above after the latest movement and adaptive UI changes.**
 2. Verify microphone permission and a real spoken response from the browser.
 3. Record a clean 90-second demo while image quota is available.
 
-### P1 — valuable polish if time remains
+### P1: valuable polish if time remains
 
 1. Add a compact “Why this was accepted” success explanation using the existing `adaptiveFeedback.whatWorked` field.
 2. Improve audio coaching without evaluating accent:
@@ -337,7 +337,7 @@ These were tested against the locally configured Gemini key during the previous 
 3. Add a tiny map ping/highlight for the `visual_hint` scaffold. Right now it deliberately gives a contextual map cue but does not animate a landmark.
 4. Add a short end-of-route summary of the phrase chunks learned.
 
-### P2 — do not prioritize for this hackathon
+### P2: do not prioritize for this hackathon
 
 - Authentication, cloud save, database, leaderboard, or social features.
 - A fully tiled collision/world engine.
@@ -363,7 +363,7 @@ These were tested against the locally configured Gemini key during the previous 
 
 Use this story in the demo:
 
-> “Aamchi Boli is not a Marathi flashcard app. It is a safe rehearsal for the exact Mumbai interaction a learner is worried about. The player physically approaches the person, speaks their intention, and Gemini decides whether the listener would understand. When they miss, it does not dump a translation—it identifies the one communicative gap, gives the smallest useful Marathi chunk, speaks it slowly, and measures whether they can recover independently.”
+> “Aamchi Boli is not a Marathi flashcard app. It is a safe rehearsal for the exact Mumbai interaction a learner is worried about. The player physically approaches the person, speaks their intention, and Gemini decides whether the listener would understand. When they miss, it does not dump a translation. It identifies the one communicative gap, gives the smallest useful Marathi chunk, speaks it slowly, and measures whether they can recover independently.”
 
 Suggested 90-second sequence:
 
@@ -389,7 +389,7 @@ Key phrase to repeat to judges: **“Gemini is the adaptive conversation engine;
 - Keep the user informed with short progress updates.
 - Do not expose `.env`, its contents, API keys, raw recordings, or any credentials.
 - If Gemini image quota fails, do not remove the maps or block learning gameplay; use the existing static art and treat the final image as optional.
-- Be respectful about the Bihar/Mumbai language context. The product should focus on confidence, communication, and respectful service—not political or legal claims.
+- Be respectful about the Bihar/Mumbai language context. The product should focus on confidence, communication, and respectful service, not political or legal claims.
 
 ---
 
