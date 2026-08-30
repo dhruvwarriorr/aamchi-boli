@@ -25,7 +25,7 @@ export type Premise = {
 };
 
 /* ------------------------------------------------------------------ */
-/* Aamchi Boli: fixed, real-world Marathi learning missions           */
+/* Aamchi Boli: code-owned world geometry with AI-authored live questions */
 /* ------------------------------------------------------------------ */
 
 /** Skill evidence awarded by a Marathi practice turn. */

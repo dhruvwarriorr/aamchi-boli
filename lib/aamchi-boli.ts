@@ -3,12 +3,13 @@ import { ThinkingLevel, Type } from "@google/genai";
 import { ai, generateContentWithRetry, generateImage, generateInteractionWithRetry, toDataUrl } from "./gemini";
 import { BOLI_MISSIONS, BOLI_OPEN_WORLD_MISSION } from "./boli-config";
 import type { BoliTurnBody } from "./types/server";
-import type { BoliErrorCode, BoliMapResponse, BoliOmniWorldResponse, BoliReactionResponse, BoliReviewItem, BoliTurnResponse, BoliVoiceResponse } from "./types/client";
+import type { BoliConversationSessionResponse, BoliErrorCode, BoliMapResponse, BoliOmniWorldResponse, BoliReactionResponse, BoliReviewItem, BoliTurnResponse, BoliVoiceResponse } from "./types/client";
 import type { BoliMission, BoliMissionStep, BoliSkillId } from "./types/shared";
 
 // Fast multimodal model for every live game turn; keep image/voice models separate.
 const BOLI_SCORING_MODEL = process.env.BOLI_SCORING_MODEL || "gemini-3.5-flash-lite";
 const BOLI_CACHE_TTL = "3600s";
+const BOLI_SESSION_TTL_MS = 30 * 60 * 1000;
 
 type BoliCacheEntry = { name: string; expiresAt: number };
 let boliCurriculumCache: BoliCacheEntry | null = null;
@@ -190,6 +191,163 @@ export type BoliReactionPerformance = {
 /** Return one fixed, code-owned learning scenario by id. */
 export function getBoliMission(id: string): BoliMission | null {
   return [...BOLI_MISSIONS, BOLI_OPEN_WORLD_MISSION].find((item) => item.id === id) ?? null;
+}
+
+const liveQuestionSchema = {
+  type: Type.OBJECT,
+  properties: {
+    objective: { type: Type.STRING },
+    npcPromptMr: { type: Type.STRING },
+    npcPromptEn: { type: Type.STRING },
+    targetPhraseMr: { type: Type.STRING },
+    targetPhraseLatin: { type: Type.STRING },
+    targetPhraseEn: { type: Type.STRING },
+    successCriteria: { type: Type.STRING },
+    skill: {
+      type: Type.STRING,
+      enum: ["greeting", "destination", "confirmation", "polite_closing", "clarification"],
+    },
+  },
+  required: [
+    "objective",
+    "npcPromptMr",
+    "npcPromptEn",
+    "targetPhraseMr",
+    "targetPhraseLatin",
+    "targetPhraseEn",
+    "successCriteria",
+    "skill",
+  ],
+};
+
+type BoliConversationSession = {
+  expiresAt: number;
+  mission: BoliMission;
+  worldContext: string;
+  /** Short server-side memory used to make later prompts react to the whole session. */
+  turns: string[];
+  avoidQuestions: string[];
+};
+
+const boliConversationSessions = new Map<string, BoliConversationSession>();
+
+function dynamicStepFromModel(raw: string): BoliMissionStep {
+  let value: Record<string, unknown>;
+  try {
+    value = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    throw new BoliError("Gemini's next question was incomplete. Please try again.", 503);
+  }
+  const fields = [
+    "objective",
+    "npcPromptMr",
+    "npcPromptEn",
+    "targetPhraseMr",
+    "targetPhraseLatin",
+    "targetPhraseEn",
+    "successCriteria",
+  ] as const;
+  if (fields.some((field) => typeof value[field] !== "string" || !value[field].trim())) {
+    throw new BoliError("Gemini could not form a usable next question. Please try again.", 503);
+  }
+  const text = (field: (typeof fields)[number]) => value[field] as string;
+  const skill = value.skill;
+  if (![
+    "greeting",
+    "destination",
+    "confirmation",
+    "polite_closing",
+    "clarification",
+  ].includes(skill as BoliSkillId)) {
+    throw new BoliError("Gemini could not choose a usable speaking skill. Please try again.", 503);
+  }
+  return {
+    objective: text("objective").trim().slice(0, 180),
+    npcPromptMr: text("npcPromptMr").trim().slice(0, 260),
+    npcPromptEn: text("npcPromptEn").trim().slice(0, 260),
+    targetPhraseMr: text("targetPhraseMr").trim().slice(0, 220),
+    targetPhraseLatin: text("targetPhraseLatin").trim().slice(0, 220),
+    targetPhraseEn: text("targetPhraseEn").trim().slice(0, 220),
+    successCriteria: text("successCriteria").trim().slice(0, 360),
+    skill: skill as BoliSkillId,
+  };
+}
+
+/** Generate one new Marathi prompt tied to the loaded map and the learner's live conversation. */
+async function generateLiveQuestion(
+  mission: BoliMission,
+  worldContext: string,
+  earlierSteps: BoliMissionStep[],
+  learnerContext?: string,
+  variationSeed?: string,
+  avoidQuestions: string[] = []
+): Promise<BoliMissionStep> {
+  const prior = earlierSteps.length
+    ? earlierSteps.map((step, index) => `${index + 1}. ${step.objective} | ${step.npcPromptEn} | answer focus: ${step.successCriteria}`).join("\n")
+    : "None — this is the opening exchange.";
+  const response = await generateContentWithRetry({
+    model: BOLI_SCORING_MODEL,
+    contents: [
+      {
+        text: [
+          "You create one live Marathi speaking question for Aamchi Boli, a beginner-friendly RPG.",
+          `WORLD: ${mission.title}; ${mission.area}. NPC: ${mission.npcName}, ${mission.npcRole}.`,
+          `CURRENT WORLD STATE: ${worldContext || mission.briefing}`,
+          variationSeed ? `SESSION VARIATION SEED: ${variationSeed}. Use it only to vary the scenario; never reveal it.` : "",
+          avoidQuestions.length
+            ? `QUESTIONS USED IN EARLIER SESSIONS — do not repeat or lightly paraphrase any of these:\n${avoidQuestions.slice(-30).join("\n")}`
+            : "",
+          `EARLIER QUESTIONS IN THIS SESSION:\n${prior}`,
+          learnerContext ? `MOST RECENT LEARNER TURN: ${learnerContext}` : "",
+          "Create a new, non-repeating question that fits the place and reacts to the learner's progress. Vary the scenario or difficulty rather than rephrasing an earlier question.",
+          "The NPC prompt must be natural Marathi with a concise English meaning. Teach one practical beginner intent, provide one possible Marathi answer and a precise success criterion. The learner may use different correct wording.",
+          "Never mention AI, a fixed lesson sequence, or completion. Return JSON only.",
+        ].join("\n"),
+      },
+    ],
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: liveQuestionSchema,
+      temperature: 1.05,
+      thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
+    },
+  });
+  if (!response.text) throw new BoliError("Gemini did not return the next question. Please try again.", 503);
+  return dynamicStepFromModel(response.text);
+}
+
+/** Start a fresh question session whenever the learner enters a world. */
+export async function createBoliConversationSession(
+  baseMission: BoliMission,
+  worldContext?: string,
+  avoidQuestions: string[] = []
+): Promise<BoliConversationSessionResponse> {
+  const context = worldContext?.trim().slice(0, 600) || baseMission.briefing;
+  const sessionId = crypto.randomUUID();
+  const firstQuestion = await generateLiveQuestion(baseMission, context, [], undefined, sessionId, avoidQuestions);
+  const mission = { ...baseMission, steps: [firstQuestion] };
+  boliConversationSessions.set(sessionId, {
+    expiresAt: Date.now() + BOLI_SESSION_TTL_MS,
+    mission,
+    worldContext: context,
+    turns: [],
+    avoidQuestions: [...avoidQuestions, firstQuestion.objective, firstQuestion.npcPromptEn],
+  });
+  for (const [id, session] of boliConversationSessions) {
+    if (session.expiresAt <= Date.now()) boliConversationSessions.delete(id);
+  }
+  return { sessionId, mission };
+}
+
+function getBoliConversationSession(sessionId: string | undefined): BoliConversationSession | null {
+  if (!sessionId) return null;
+  const session = boliConversationSessions.get(sessionId) ?? null;
+  if (!session || session.expiresAt <= Date.now()) {
+    if (session) boliConversationSessions.delete(sessionId);
+    return null;
+  }
+  session.expiresAt = Date.now() + BOLI_SESSION_TTL_MS;
+  return session;
 }
 
 /** Generate a single fixed RPG map while keeping mission mechanics code-owned. */
@@ -509,7 +667,14 @@ function buildAdaptiveFeedback(
  * Gemini judges whether the learner's intent is understandable, never their accent.
  */
 export async function evaluateBoliTurn(body: BoliTurnBody): Promise<BoliTurnResponse> {
-  const mission = getBoliMission(body.missionId);
+  const session = getBoliConversationSession(body.sessionId);
+  if (body.sessionId && !session) {
+    throw new BoliError("This conversation expired. Re-enter the world for a fresh question.", 410);
+  }
+  if (session && session.mission.id !== body.missionId) {
+    throw new BoliError("That conversation does not belong to this world.", 422);
+  }
+  const mission = session?.mission ?? getBoliMission(body.missionId);
   if (!mission) throw new BoliError("Unknown Marathi mission.", 404);
   const mode = body.mode === "review" ? "review" : "mission";
   let requestedStepIndex = body.stepIndex;
@@ -592,7 +757,9 @@ export async function evaluateBoliTurn(body: BoliTurnBody): Promise<BoliTurnResp
     contents.push({ text: `LEARNER TYPED: ${typed}` });
   }
 
-  const cachedContent = await ensureBoliContextCache();
+  // The fixed curriculum cache intentionally does not apply to generated
+  // sessions: their objectives are minted from the current world at runtime.
+  const cachedContent = body.sessionId ? null : await ensureBoliContextCache();
   const response = await generateContentWithRetry({
     model: BOLI_SCORING_MODEL,
     contents,
@@ -637,7 +804,9 @@ export async function evaluateBoliTurn(body: BoliTurnBody): Promise<BoliTurnResp
       ? raw.heardMarathi
       : "";
   const utteranceForGuard = hasAudio ? primaryAudioTranscript : typed;
-  const signalsPresent = objectiveSignals(mission.id, stepIndex, utteranceForGuard);
+  const signalsPresent = body.sessionId
+    ? modelOutcome === "success"
+    : objectiveSignals(mission.id, stepIndex, utteranceForGuard);
   const marathiPresent = isMarathiAttempt(utteranceForGuard);
   // A model cannot unlock a fixed route on its own. Even if Gemini is
   // optimistic and returns `success`, the utterance must contain the concrete
@@ -653,7 +822,29 @@ export async function evaluateBoliTurn(body: BoliTurnBody): Promise<BoliTurnResp
       : modelOutcome;
   const didAdvance = outcome === "success" && mode === "mission";
   const nextStep = didAdvance ? Math.min(stepIndex + 1, mission.steps.length) : body.stepIndex;
-  const completed = didAdvance && nextStep === mission.steps.length;
+  const completed = !session && didAdvance && nextStep === mission.steps.length;
+  const sessionMemory = session
+    ? session.turns.slice(-6).join("\n")
+    : "";
+  if (session) {
+    session.turns.push(`Exchange ${stepIndex + 1}: learner said “${utteranceForGuard.slice(0, 240)}”; result=${outcome}.`);
+    if (session.turns.length > 12) session.turns.splice(0, session.turns.length - 12);
+  }
+  const nextQuestion = didAdvance && session
+    ? await generateLiveQuestion(
+        session.mission,
+        session.worldContext,
+        session.mission.steps,
+        `${sessionMemory}\nThey answered “${utteranceForGuard.slice(0, 300)}”. Their result was ${outcome}; adapt the next scenario accordingly.`,
+        body.sessionId,
+        session.avoidQuestions
+      )
+    : undefined;
+  if (nextQuestion && session) {
+    session.mission.steps.push(nextQuestion);
+    session.avoidQuestions.push(nextQuestion.objective, nextQuestion.npcPromptEn);
+    if (session.avoidQuestions.length > 60) session.avoidQuestions.splice(0, session.avoidQuestions.length - 60);
+  }
   const recast = raw.recast as Record<string, unknown> | undefined;
   const adaptiveFeedback = buildAdaptiveFeedback(raw, step, didAdvance, attemptsBeforeThisTurn);
   if (!marathiPresent) {
@@ -746,6 +937,7 @@ export async function evaluateBoliTurn(body: BoliTurnBody): Promise<BoliTurnResp
     reviewItem,
     nextStep,
     completed,
+    nextQuestion,
     reactionPrompt:
       completed && typeof raw.reactionPrompt === "string"
         ? raw.reactionPrompt.slice(0, 500)

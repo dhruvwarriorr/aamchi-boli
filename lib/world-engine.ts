@@ -896,7 +896,7 @@ const dialogueSchema = {
       type: Type.ARRAY,
       items: { type: Type.STRING },
       description:
-        "Exactly 3 reply options, 2-7 words, each a genuinely DIFFERENT tactic (press harder / offer something / change subject). Empty when done is true.",
+        "Exactly 3 fresh reply options, 2-9 words, each a genuinely DIFFERENT tactic and grounded in this exact moment. Never repeat wording already used by the player in this conversation. Empty only after a grave offense.",
     },
     questUpdate: {
       type: Type.STRING,
@@ -916,12 +916,13 @@ const dialogueSchema = {
     },
     done: {
       type: Type.BOOLEAN,
-      description: "True when the NPC closes the conversation.",
+      description: "Always false during play. The player leaves explicitly with the UI control; never end a normal or tense conversation automatically.",
     },
   },
   required: ["line", "mood", "options", "clueRevealed", "offense", "done"],
 };
 
+/** Generate a fresh, state-aware NPC turn for one player-controlled conversation. */
 export async function generateDialogue(
   bible: GameBible,
   npcIndex: number,
@@ -933,19 +934,35 @@ export async function generateDialogue(
     inventory?: string[];
     /** Current danger-meter value 0..100. */
     heat?: number;
+    /** Fresh browser-generated nonce which makes every approach a distinct scenario. */
+    conversationId?: string;
+    /** Prior NPC questions from this world, supplied as a best-effort repeat guard. */
+    avoidQuestions?: string[];
+    /** Immediate location and atmosphere; use these rather than generic story beats. */
+    scene?: Pick<SceneData, "id" | "title" | "ambient" | "kind">;
   }
 ): Promise<DialogueResponse> {
   const npc = bible.npcs[npcIndex];
   const room = bible.rooms[npcIndex];
   if (!npc || !room) throw new Error(`No NPC ${npcIndex} in the bible.`);
-  const clue = bible.story.clues[npcIndex];
 
   const lines: string[] = [
     bibleBrief(bible),
     "",
     `YOU ARE NPC ${npcIndex + 1}: ${npc.name}, in ${room.name}. Play them exactly as the bible defines: persona, wants, fears, quirk.`,
     `YOUR VERBAL QUIRK (use it): ${npc.quirk}`,
+    `CONVERSATION SESSION: ${storyCtx?.conversationId ?? "new-approach"}. Treat this as a fresh encounter: invent a specific opening situation and question for this session, not a reusable stock line.`,
   ];
+  if (storyCtx?.scene) {
+    lines.push(
+      `PLAYER'S CURRENT SCENE: ${storyCtx.scene.title} (${storyCtx.scene.kind}) — ${storyCtx.scene.ambient}. Make the next question react to this immediate place.`
+    );
+  }
+  if (storyCtx?.avoidQuestions?.length) {
+    lines.push(
+      `QUESTIONS USED IN EARLIER APPROACHES — do not repeat or lightly paraphrase these:\n${storyCtx.avoidQuestions.slice(-30).join("\n")}`
+    );
+  }
   if (storyCtx?.inventory?.length) {
     lines.push(
       `THE PLAYER VISIBLY CARRIES: ${storyCtx.inventory.join(", ")} — react to these when it makes sense.`
@@ -967,8 +984,9 @@ export async function generateDialogue(
   const exchanges = storyCtx?.exchanges ?? history.filter((t) => t.speaker === "player").length;
   lines.push(
     "",
-    "Reply in character, brief and specific.",
-    `REFEREE the player's last line: if it trips your TURNS HOSTILE IF wire (${npc.turnsHostileIf}), set offense='grave', refuse the clue, and slam the conversation shut (done=true, options=[]). Rudeness or careless pressure that merely stings is offense='minor'. Otherwise offense='none'.`
+    "Reply in character, brief and specific. Every normal NPC line must end by inviting a real response: a context-specific question, dilemma, or request. Vary difficulty with the live state: begin approachable, then make choices more nuanced as the player gains clues, carries relevant items, or draws heat.",
+    "Keep the conversation continuous. Do not conclude, say goodbye, point the player away, or run out of questions just because a clue was revealed or several exchanges have passed. The player alone can leave through the UI.",
+    `REFEREE the player's last line: if it trips your TURNS HOSTILE IF wire (${npc.turnsHostileIf}), set offense='grave' and refuse the clue, but keep asking a guarded follow-up because the player controls when to leave. Rudeness or careless pressure that merely stings is offense='minor'. Otherwise offense='none'.`
   );
   if (!storyCtx?.clueFound) {
     if (exchanges >= 2) {
@@ -981,18 +999,12 @@ export async function generateDialogue(
       );
     }
   }
-  if (exchanges >= 3 || storyCtx?.clueFound) {
-    lines.push(
-      "This conversation has served its purpose. Close it warmly THIS turn: point the player onward (other doors hold the rest), set done=true, options=[]."
-    );
-  }
-
   const res = await generateContentWithRetry({
     model: TEXT_MODEL,
     contents: lines.join("\n"),
     config: {
       systemInstruction:
-        "You are an NPC in a cinematic adventure game with ONE convergent mystery, AND the referee of the game bible you are given. You are a PERSON, not an information kiosk: you have fears, debts, grudges, and a stake in this story. Rules: (1) every line raises tension or reveals character — never neutral exposition; (2) react to WHAT the player says and HOW; (3) pepper speech naturally with Hindi/regional words matching the world's region (arre, beta, sahib, theek hai, bas) while staying clear in English; (4) use your verbal quirk; (5) conversations are short — a few charged exchanges, never small talk; (6) NEVER reveal or hint at the bible's hidden secret, and never speak the other NPCs' clues — only your own; (7) judge offenses honestly: the player must be able to get this wrong. These lines are voiced aloud, so write for the ear. Never break character, never mention being an AI. Return ONLY the structured object.",
+        "You are an NPC in a cinematic adventure game with ONE convergent mystery, AND the referee of the game bible you are given. You are a PERSON, not an information kiosk: you have fears, debts, grudges, and a stake in this story. Rules: (1) every line raises tension or reveals character — never neutral exposition; (2) react to WHAT the player says and HOW; (3) pepper speech naturally with Hindi/regional words matching the world's region (arre, beta, sahib, theek hai, bas) while staying clear in English; (4) use your verbal quirk; (5) generate a new, location-specific conversational question for each fresh session and build follow-ups from the player response; (6) continue indefinitely and let the player explicitly leave — never auto-close after a clue, grave offense, or turn count; a grave offense changes your tone and withholds information but does not end the exchange; (7) NEVER reveal or hint at the bible's hidden secret, and never speak the other NPCs' clues — only your own; (8) judge offenses honestly: the player must be able to get this wrong. These lines are voiced aloud, so write for the ear. Never break character, never mention being an AI. Return ONLY the structured object.",
       responseMimeType: "application/json",
       responseSchema: dialogueSchema,
       temperature: 1.0,
@@ -1001,17 +1013,18 @@ export async function generateDialogue(
   if (!res.text) throw new Error("Empty dialogue from text model.");
   const out = JSON.parse(res.text) as DialogueResponse;
   if (out.offense !== "minor" && out.offense !== "grave") out.offense = "none";
-  // A grave offense always slams the conversation shut and keeps the clue.
+  // A grave offense changes the NPC's tone and withholds the clue, but the
+  // player still controls when the conversation ends.
   if (out.offense === "grave") {
-    out.done = true;
     out.clueRevealed = false;
   }
-  if (out.done) {
-    out.options = [];
-  } else {
-    out.options = (out.options ?? []).slice(0, 3);
-    while (out.options.length < 3) out.options.push("Hmm… tell me more.");
-  }
+  out.done = false;
+  out.options = [...new Set(
+    (out.options ?? [])
+      .filter((option): option is string => typeof option === "string")
+      .map((option) => option.trim())
+      .filter(Boolean)
+  )].slice(0, 3);
   return out;
 }
 

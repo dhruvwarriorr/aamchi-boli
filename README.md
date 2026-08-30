@@ -26,7 +26,7 @@ This is practical language training for everyday service and community interacti
 
 ## Three Mumbai missions
 
-Each mission has three short speaking goals, Marathi in Devanagari, Latin transliteration, and an English meaning.
+Each world starts a fresh Gemini conversation. Gemini creates the first speaking goal from the place, then creates a new contextual follow-up after every successful reply; Marathi, transliteration, and an English meaning stay visible for support.
 
 | Mission | Person met | Place | What the learner practises |
 | --- | --- | --- | --- |
@@ -40,8 +40,8 @@ Each mission has three short speaking goals, Marathi in Devanagari, Latin transl
 
 - The three detailed 16-bit Mumbai maps are generated with **Gemini Nano Banana** from tightly constrained environment prompts, then stored as fixed local game assets. This keeps mission starts fast and visual continuity reliable.
 - A map prompt specifies the playable route, the NPC position, a quiet dialogue-HUD area, Mumbai details, palette, camera angle, and a strict no-text/no-logo constraint. It creates a game level, not a generic postcard.
-- The route picker also offers a standalone **Create your own world** path. The learner can request anything safe, such as a floating library or an underwater garden. **Gemini Omni** shapes a playable scene direction and **Nano Banana** paints it before the player enters; an open-world Boli Guide supplies a compact, code-owned three-turn Marathi micro-lesson.
-- The fixed scoring rubric uses Gemini explicit context caching on models that support it. Gemini Omni's Interactions API does not expose explicit Cached Content, so live world requests use a short-lived in-memory cache of the complete directed scene and image; an exact repeated prompt avoids both direction and repainting work. A cache hit is visible in the HUD.
+- The route picker also offers a standalone **Create your own world** path. The learner can request anything safe, such as a floating library or an underwater garden. **Gemini Omni** shapes a playable scene direction and **Nano Banana** paints it before the player enters; a Boli Guide then asks an open-ended, context-aware Marathi question stream grounded in that world.
+- The fixed curriculum remains available as a cacheable scoring context on models that support Gemini explicit context caching; active generated conversations intentionally bypass that cache and keep their own world context plus session memory so each question can adapt. Gemini Omni's Interactions API does not expose explicit Cached Content, so live world requests use a short-lived in-memory cache of the complete directed scene and image; an exact repeated prompt avoids both direction and repainting work. A cache hit is visible in the HUD.
 - On mission completion, Gemini generates a **new learner-specific reaction frame**: for example, an NPC's warm farewell and a subtle success path based on the learner's final exchange. It is generated only after success is earned, so the live image has narrative meaning and image quota is not wasted on every turn.
 
 The full-screen route picker shows the three prebuilt Nano Banana map presets as playable image cards, plus one Kahani-style custom-world prompt. The single Mumbai-monsoon backdrop is shell art made with ChatGPT Image Generation; the actual game maps and live achievement frames are Gemini/Nano Banana work, so the game mechanics and visual payoff remain directly tied to Gemini.
@@ -175,7 +175,7 @@ Nano Banana requires image-generation quota on the Gemini project attached to `G
 | **22 to 34s** | Press **Hear Gemini voice**. Point out Marathi, transliteration, and English meaning. | Marathi TTS and beginner-friendly multimodal teaching. |
 | **34 to 50s** | Speak: “नमस्कार, मला के. जे. सोमय्या कॉलेज ऑफ इंजिनिअरिंगला जायचे आहे.” | Gemini receives real audio and judges communicative intent, not accent. |
 | **50 to 62s** | Show the returned transcript, NPC reply, intent, and unlocked skill. If needed, type an imperfect answer once to show the repair/hint loop. | Structured Gemini response drives the game state and adapts to the learner. |
-| **62 to 78s** | Complete the remaining two turns using voice or the typed fallback. | A focused three-turn learning loop with measurable outcomes. |
+| **62 to 78s** | Answer a follow-up using voice or the typed fallback, then show Gemini adapt the next question. | A continuous learning loop with measurable outcomes. |
 | **78 to 88s** | Let the earned Nano Banana reaction frame appear. | Live generation is tied to a learner achievement, not decoration. |
 | **88 to 90s** | Show mastery, first-try/recovery evidence, and local best score. | The experience measures learning without requiring login or collecting a profile. |
 
@@ -186,7 +186,7 @@ Nano Banana requires image-generation quota on the Gemini project attached to `G
 | `components/AamchiBoli.tsx` | Learner-name setup, route flow, microphone handling, adaptive review queue, live scene prompt, metrics, and UI. |
 | `components/BoliWorldCanvas.tsx` | Kahani-style full-screen canvas world, sprite animation, collision bounds, proximity checks, keyboard controls, and mobile joystick. |
 | `lib/boli-config.ts` | Three fixed Mumbai missions, their NPCs, phrases, geometry, and Nano Banana art prompts. |
-| `lib/aamchi-boli.ts` | Gemini scoring/caching, strict objective validation, adaptive review items, Omni scene direction, Nano Banana rendering, and voice synthesis. |
+| `lib/aamchi-boli.ts` | Gemini scoring/caching, fresh live-question sessions, adaptive review items, Omni scene direction, Nano Banana rendering, and voice synthesis. |
 | `app/api/aamchi-boli/*` | Public no-auth API routes for maps, scoring, voice, and earned reaction frames. |
 | `public/aamchi-boli/maps/` | The three prebuilt Nano Banana mission maps. |
 | `public/aamchi-boli/lobby/` | The prebuilt full-screen Mumbai route-picker backdrop. |

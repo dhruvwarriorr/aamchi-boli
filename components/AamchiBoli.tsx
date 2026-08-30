@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { BoliWorldCanvas } from "@/components/BoliWorldCanvas";
 import type {
+  BoliConversationSessionResponse,
   BoliLearningState,
   BoliMapResponse,
   BoliOmniWorldResponse,
@@ -17,7 +18,7 @@ import type {
   BoliTurnResponse,
   BoliVoiceResponse,
 } from "@/lib/types/client";
-import type { BoliInputMode, BoliMission } from "@/lib/types/shared";
+import type { BoliInputMode, BoliMission, BoliMissionStep } from "@/lib/types/shared";
 
 type View = "welcome" | "choose-mission" | "mission";
 
@@ -77,6 +78,30 @@ function persistMastery(missionId: string, value: number): void {
   }
 }
 
+/** Keep a compact browser-side memory of generated prompts so later sessions avoid repeats. */
+function storedLiveQuestions(missionId: string): string[] {
+  try {
+    const raw = window.localStorage.getItem(`aamchi-boli:${missionId}:live-questions-v1`);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string").slice(-30) : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberLiveQuestion(missionId: string, step?: BoliMissionStep): void {
+  if (!step) return;
+  const prompt = `${step.objective} | ${step.npcPromptEn}`.trim();
+  if (!prompt) return;
+  const next = [...storedLiveQuestions(missionId).filter((item) => item !== prompt), prompt].slice(-30);
+  try {
+    window.localStorage.setItem(`aamchi-boli:${missionId}:live-questions-v1`, JSON.stringify(next));
+  } catch {
+    // Prompt memory is best-effort and never blocks a live session.
+  }
+}
+
+/** Read the best locally retained learning evidence while questions stay live-generated. */
 function storedLearning(mission: BoliMission): BoliLearningState {
   try {
     const raw = window.localStorage.getItem(`aamchi-boli:${mission.id}:learning-v2`);
@@ -157,6 +182,8 @@ export function AamchiBoli() {
   const [playerName, setPlayerName] = useState("Learner");
   const [supportLanguage, setSupportLanguage] = useState<(typeof SUPPORT_LANGUAGES)[number]["code"]>("English");
   const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
+  const [activeMission, setActiveMission] = useState<BoliMission | null>(null);
+  const [conversationSessionId, setConversationSessionId] = useState<string | null>(null);
   const [map, setMap] = useState<BoliMapResponse | null>(null);
   const [liveWorld, setLiveWorld] = useState<BoliOmniWorldResponse | null>(null);
   const [openingPrompt, setOpeningPrompt] = useState("");
@@ -219,8 +246,10 @@ export function AamchiBoli() {
     };
   }, []);
 
-  const mission = [...BOLI_MISSIONS, BOLI_OPEN_WORLD_MISSION].find((candidate) => candidate.id === selectedMissionId) ?? null;
-  const completed = Boolean(mission && stepIndex >= mission.steps.length);
+  const baseMission = [...BOLI_MISSIONS, BOLI_OPEN_WORLD_MISSION].find((candidate) => candidate.id === selectedMissionId) ?? null;
+  const mission = activeMission ?? baseMission;
+  // Live sessions have no predefined endpoint; only legacy non-session routes can complete.
+  const completed = Boolean(!conversationSessionId && mission && stepIndex >= mission.steps.length);
   const step = mission?.steps[Math.min(stepIndex, Math.max(mission.steps.length - 1, 0))] ?? null;
   const questProgress = mission?.steps.length ? Math.round((stepIndex / mission.steps.length) * 100) : 0;
   const learningSummary = summarizeLearning(mission, learning);
@@ -230,6 +259,21 @@ export function AamchiBoli() {
   const conversationStep = activeReview && mission ? mission.steps[activeReview.sourceStepIndex] : step;
   const activeTurn = turn && turnStepIndex !== null && (turnStepIndex === stepIndex || turnStepIndex === activeReview?.sourceStepIndex) ? turn : null;
   const recentlyClearedTurn = turn && turnStepIndex !== null && turnStepIndex < stepIndex ? turn : null;
+
+  const startConversation = async (missionToStart: BoliMission, worldContext: string, sessionId: number) => {
+    const response = await fetch("/api/aamchi-boli/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ missionId: missionToStart.id, worldContext, avoidQuestions: storedLiveQuestions(missionToStart.id) }),
+    });
+    const data = (await response.json()) as BoliConversationSessionResponse & { error?: string };
+    if (!response.ok) throw new Error(data.error || "Gemini could not begin this conversation.");
+    if (sessionId === missionSessionRef.current) {
+      setActiveMission(data.mission);
+      setConversationSessionId(data.sessionId);
+      rememberLiveQuestion(missionToStart.id, data.mission.steps[0]);
+    }
+  };
 
   const generateLiveWorldFor = async (missionToGenerate: BoliMission, prompt: string, sessionId: number) => {
     const cleanPrompt = prompt.trim();
@@ -246,6 +290,11 @@ export function AamchiBoli() {
       if (!response.ok) throw new Error(data.error || "The live world variation could not be rendered.");
       if (sessionId === missionSessionRef.current) {
         setLiveWorld(data);
+        await startConversation(
+          missionToGenerate,
+          [data.prompt, data.learningMoment, data.scenePhrase?.meaning].filter(Boolean).join(" · "),
+          sessionId
+        );
       }
     } catch (cause) {
       if (sessionId === missionSessionRef.current) {
@@ -272,6 +321,8 @@ export function AamchiBoli() {
     const requestId = ++mapRequestRef.current;
     ++missionSessionRef.current;
     setSelectedMissionId(missionToStart.id);
+    setActiveMission(null);
+    setConversationSessionId(null);
     setView("mission");
     setLoadingMap(true);
     setMap(null);
@@ -290,9 +341,9 @@ export function AamchiBoli() {
     setReviewQueue([]);
     setReviewingItemId(null);
     setOpeningPrompt("");
-    const savedLearning = storedLearning(missionToStart);
-    learningRef.current = savedLearning;
-    setLearning(savedLearning);
+    const sessionLearning = storedLearning(missionToStart);
+    learningRef.current = sessionLearning;
+    setLearning(sessionLearning);
     setBestMastery(storedMastery(missionToStart.id));
     setError(null);
     // A custom build is its own world: paint it directly, never generate a
@@ -308,7 +359,15 @@ export function AamchiBoli() {
         fallback: false,
         source: "prebuilt",
       });
-      setLoadingMap(false);
+      try {
+        await startConversation(missionToStart, missionToStart.briefing, missionSessionRef.current);
+      } catch (cause) {
+        if (requestId === mapRequestRef.current) {
+          setError(cause instanceof Error ? cause.message : "Gemini could not begin this conversation.");
+        }
+      } finally {
+        if (requestId === mapRequestRef.current) setLoadingMap(false);
+      }
       return;
     }
     try {
@@ -321,6 +380,7 @@ export function AamchiBoli() {
       if (!response.ok) throw new Error(data.error || "The map could not be generated.");
       if (requestId === mapRequestRef.current) {
         setMap(data);
+        await startConversation(missionToStart, missionToStart.briefing, missionSessionRef.current);
       }
     } catch (cause) {
       if (requestId === mapRequestRef.current) {
@@ -343,6 +403,12 @@ export function AamchiBoli() {
     setShowHint(response.outcome !== "success" && response.supportRecommendation !== "none");
     const isReview = Boolean(reviewingItemId);
     if (!isReview) setStepIndex(Math.min(Math.max(response.nextStep, 0), mission.steps.length));
+    if (!isReview && response.nextQuestion) {
+      rememberLiveQuestion(mission.id, response.nextQuestion);
+      setActiveMission((current) => current
+        ? { ...current, steps: [...current.steps, response.nextQuestion!] }
+        : current);
+    }
     const progressKey = stepLearningKey(attemptedStepIndex);
     const current = learningRef.current;
     const prior = current[progressKey] ?? emptyStepProgress();
@@ -444,7 +510,7 @@ export function AamchiBoli() {
       const response = await fetch("/api/aamchi-boli/turn", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ missionId: mission.id, stepIndex: attemptedStepIndex, attemptsForStep, mode: isReview ? "review" : "mission", reviewItemId: activeReview?.id, supportLanguage, ...payload }),
+        body: JSON.stringify({ missionId: mission.id, sessionId: conversationSessionId ?? undefined, stepIndex: attemptedStepIndex, attemptsForStep, mode: isReview ? "review" : "mission", reviewItemId: activeReview?.id, supportLanguage, ...payload }),
       });
       const data = (await response.json()) as BoliTurnResponse & { error?: string };
       if (!response.ok) throw new Error(data.error || "Gemini could not score that turn.");
@@ -617,6 +683,8 @@ export function AamchiBoli() {
     setReviewingItemId(null);
     setError(null);
     commitLearning(freshLearningState(mission));
+    setActiveMission(null);
+    setConversationSessionId(null);
     if (!preserveMap) {
       setMap(null);
       setLiveWorld(null);
@@ -694,7 +762,7 @@ export function AamchiBoli() {
                 </select>
               </label>
             </div>
-            <p className="mt-3 text-sm font-semibold text-inksoft">Each quest is three short turns: speak, get one useful correction, then try again.</p>
+            <p className="mt-3 text-sm font-semibold text-inksoft">Every world begins with a fresh Gemini question, then grows through your replies.</p>
             <Button className="mt-5" size="lg" type="submit" disabled={!nameInput.trim()}>
               Explore worlds <Sparkles />
             </Button>
@@ -750,7 +818,7 @@ export function AamchiBoli() {
                 <div className="absolute inset-x-0 bottom-0 p-4 text-white">
                   <p className="flex items-center gap-1 text-[10px] font-black uppercase tracking-[0.14em] text-[#ffd166]"><MapPin size={13} /> {candidate.area}</p>
                   <h2 className="mt-2 font-display text-2xl font-extrabold leading-tight">{candidate.title}</h2>
-                  <p className="mt-2 line-clamp-2 text-sm font-semibold text-[#fff6dd]/90">Meet {candidate.npcName} · {candidate.steps.length} speaking goals</p>
+                  <p className="mt-2 line-clamp-2 text-sm font-semibold text-[#fff6dd]/90">Meet {candidate.npcName} · a live AI-led Marathi conversation</p>
                   <span className="mt-4 inline-flex rounded-base border-2 border-black bg-main px-3 py-2 text-xs font-black text-black shadow-shadow">Enter preset <Sparkles size={14} /></span>
                 </div>
               </button>
@@ -834,7 +902,7 @@ export function AamchiBoli() {
               <div className="mt-5 grid gap-2 text-sm font-bold">
                 <p className="rounded-base border-2 border-black bg-[#d9ff83] px-3 py-2">1 · Scene direction</p>
                 <p className="rounded-base border-2 border-black bg-white px-3 py-2">2 · Pixel-art world</p>
-                <p className="rounded-base border-2 border-black bg-white px-3 py-2">3 · Three short Marathi bites</p>
+                <p className="rounded-base border-2 border-black bg-white px-3 py-2">3 · First live question</p>
               </div>
             </section>
           </div>
@@ -938,7 +1006,7 @@ export function AamchiBoli() {
             </div>
           ) : conversationUnlocked ? (
             <div className="relative z-10 max-w-xl rounded-base border-2 border-black bg-[#fff6dd] p-4 text-black shadow-shadow">
-              <p className="text-xs font-bold uppercase tracking-[0.16em] text-inksoft">Quest {stepIndex + 1} of {mission.steps.length}</p>
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-inksoft">Live exchange {stepIndex + 1}</p>
               <p className="mt-1 font-display text-xl font-extrabold">{step.objective}</p>
             </div>
           ) : null}
@@ -1091,7 +1159,7 @@ export function AamchiBoli() {
                   <h2 className="font-display text-2xl font-extrabold">{mission.npcName}</h2>
                   <p className="mt-1 text-sm font-semibold text-inksoft">{playerName} · {mission.npcRole}</p>
                 </div>
-                {!completed && <p className="rounded-base border-2 border-black/25 bg-white px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em]">Step {stepIndex + 1}/{mission.steps.length}</p>}
+                {!completed && <p className="rounded-base border-2 border-black/25 bg-white px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em]">Live exchange {stepIndex + 1}</p>}
               </div>
 
               {error && <p className="mt-3 rounded-base border-2 border-black bg-[#ffd3ca] p-2 text-sm font-semibold">{error}</p>}

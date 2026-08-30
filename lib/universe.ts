@@ -191,7 +191,7 @@ export type DialogueResponse = {
   /**
    * Referee's verdict on the player's last line: "minor" stings (+heat),
    * "grave" means the player tripped this NPC's hostility wire (+more heat,
-   * conversation slams shut).
+   * guarded information withheld while the conversation remains open).
    */
   offense?: "none" | "minor" | "grave";
   done: boolean;
