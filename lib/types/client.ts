@@ -8,7 +8,7 @@
 import type { Choice, Effects, EndingKind, Stats } from "../stats";
 import type { DialogueTurn, GameBible, SceneData } from "../universe";
 import type { Premise } from "./shared";
-import type { BoliInputMode, BoliMission, BoliSkillId } from "./shared";
+import type { BoliInputMode, BoliMission, BoliMissionStep, BoliSkillId } from "./shared";
 
 /** Premise card / world metadata shown in the UI. */
 export type { Premise } from "./shared";
@@ -164,6 +164,8 @@ export type WorldDialogueState = {
   options: string[];
   thinking: boolean;
   mood?: string;
+  /** Fresh per-approach nonce; keeps generated conversation openings distinct. */
+  conversationId: string;
 };
 
 /* ------------------------------------------------------------------ */
@@ -173,6 +175,8 @@ export type WorldDialogueState = {
 /** A browser turn sent to Gemini as speech or a typed accessibility fallback. */
 export type BoliTurnRequest = {
   missionId: string;
+  /** Server-issued live conversation, which owns this session's generated questions. */
+  sessionId?: string;
   stepIndex: number;
   /** Learner's preferred language for Gemini's concise coaching text. */
   supportLanguage?: "English" | "Hindi" | "Gujarati" | "Tamil" | "Telugu";
@@ -249,7 +253,16 @@ export type BoliTurnResponse = {
   reviewItem?: BoliReviewItem;
   nextStep: number;
   completed: boolean;
+  /** The AI-authored follow-up question to append after a successful live turn. */
+  nextQuestion?: BoliMissionStep;
   reactionPrompt?: string;
+};
+
+/** Fresh question sequence created whenever a learner enters a world. */
+export type BoliConversationSessionResponse = {
+  sessionId: string;
+  /** Base world metadata plus the first generated question. */
+  mission: BoliMission;
 };
 
 /** Session-local evidence behind one functional Marathi skill. */

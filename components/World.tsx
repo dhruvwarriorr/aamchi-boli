@@ -88,13 +88,6 @@ const EDGE_META: Record<
 
 const ORIGIN_ID = "s0_0";
 
-/** Default opening dialogue options when approaching an NPC. */
-const OPENING_OPTIONS = [
-  "Who are you, really?",
-  "Something's wrong here. Talk.",
-  "I need your help.",
-];
-
 /** Sarvam Bulbul delivery params derived from dialogue mood. */
 function voiceParams(mood?: string): { pace: number; temperature: number } {
   switch (mood) {
@@ -126,6 +119,34 @@ function isDataUrl(value: string): boolean {
 /** True when the value is a remote URL (e.g. Supabase Storage). */
 function isRemoteUrl(value: string): boolean {
   return value.startsWith("http://") || value.startsWith("https://");
+}
+
+/** Keep a small per-world memory so fresh NPC approaches do not recycle questions. */
+function dialogueMemoryKey(gameId: string | null, bible: GameBible, npcIndex: number): string {
+  return `kahani-dialogue:${gameId ?? bible.title}:${npcIndex}`;
+}
+
+function storedDialogueQuestions(key: string): string[] {
+  try {
+    const raw = localStorage.getItem(`${key}:questions-v1`);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string").slice(-30)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberDialogueQuestion(key: string, line: string): void {
+  const prompt = line.trim().slice(0, 260);
+  if (!prompt) return;
+  const next = [...storedDialogueQuestions(key).filter((item) => item !== prompt), prompt].slice(-30);
+  try {
+    localStorage.setItem(`${key}:questions-v1`, JSON.stringify(next));
+  } catch {
+    // Repeat avoidance is an enhancement; blocked storage must not stop play.
+  }
 }
 
 /**
@@ -315,7 +336,6 @@ export function World({ mode, gameId: routeGameId, initialIdea }: WorldProps) {
   const screenPromises = useRef<Map<string, Promise<SceneData>>>(new Map());
   const placedRoomsRef = useRef<Set<number>>(new Set());
   const voiceCache = useRef<Map<string, Promise<string | null>>>(new Map());
-  const dialogueCache = useRef<Map<string, Promise<DialogueResponse>>>(new Map());
   const finalePromise = useRef<Promise<FinaleData | null> | null>(null);
   const defeatFinalePromise = useRef<Promise<FinaleData | null> | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -520,36 +540,6 @@ export function World({ mode, gameId: routeGameId, initialIdea }: WorldProps) {
     []
   );
 
-  const prefetchConversation = useCallback(
-    (theBible: GameBible, s: SceneData) => {
-      if (!canGenerateRef.current) return;
-      const npc = s.npc;
-      if (!npc || typeof s.clueIndex !== "number") return;
-      const wary = voiceParams("wary");
-      fetchVoice(npc.opening, npc.voice, wary.pace, wary.temperature);
-      for (const option of OPENING_OPTIONS) {
-        const key = `${s.id}|${option}`;
-        if (dialogueCache.current.has(key)) continue;
-        const p = post<DialogueResponse>("/api/dialogue", {
-          bible: theBible,
-          npcIndex: s.clueIndex,
-          history: [{ speaker: "npc", text: npc.opening }],
-          playerLine: option,
-          clueFound: false,
-          exchanges: 1,
-          heat: 0,
-        }).then((reply) => {
-          const params = voiceParams(reply.mood);
-          fetchVoice(reply.line, npc.voice, params.pace, params.temperature);
-          return reply;
-        });
-        p.catch(() => dialogueCache.current.delete(key));
-        dialogueCache.current.set(key, p);
-      }
-    },
-    [fetchVoice]
-  );
-
   const prefetchInterior = useCallback(
     (theBible: GameBible, h: Hotspot, parentId: string) => {
       if (typeof h.clueIndex !== "number") return;
@@ -569,13 +559,12 @@ export function World({ mode, gameId: routeGameId, initialIdea }: WorldProps) {
         setInteriorsReady((r) => r + 1);
         saveScene(s);
         warmSceneImages(s);
-        prefetchConversation(theBible, s);
         return s;
       });
       p.catch(() => interiorPromises.current.delete(roomKey));
       interiorPromises.current.set(roomKey, p);
     },
-    [addCalls, prefetchConversation, saveScene]
+    [addCalls, saveScene]
   );
 
   /**
@@ -652,7 +641,6 @@ export function World({ mode, gameId: routeGameId, initialIdea }: WorldProps) {
     screenPromises.current = new Map();
     placedRoomsRef.current = new Set();
     voiceCache.current = new Map();
-    dialogueCache.current = new Map();
     finalePromise.current = null;
     defeatFinalePromise.current = null;
     savedFinalesRef.current = {};
@@ -899,7 +887,7 @@ export function World({ mode, gameId: routeGameId, initialIdea }: WorldProps) {
 
   const onInteract = useCallback(
     async (h: Hotspot) => {
-      if (!premise || !scene) return;
+      if (!premise || !scene || !bible) return;
       if (secondsLeft <= 0 || finale || finaleLoading) return;
 
       if (h.kind === "exit") {
@@ -965,26 +953,62 @@ export function World({ mode, gameId: routeGameId, initialIdea }: WorldProps) {
         return;
       }
 
-      if (h.kind === "npc" && scene.npc) {
-        const opening = scene.npc.opening;
-        const params = voiceParams("wary");
+      if (h.kind === "npc" && scene.npc && typeof scene.clueIndex === "number") {
         posthog.capture("npc_conversation_started", { npc_name: scene.npc.name, scene_id: scene.id });
-        if (voiceOnRef.current) {
-          setDialogue({
-            npc: scene.npc,
-            history: [],
-            options: [],
-            thinking: true,
-          });
-          await fetchVoice(opening, scene.npc.voice, params.pace, params.temperature);
-        }
+        const conversationId = crypto.randomUUID();
+        const questionMemoryKey = dialogueMemoryKey(gameIdRef.current, bible, scene.clueIndex);
         setDialogue({
           npc: scene.npc,
-          history: [{ speaker: "npc", text: opening }],
-          options: OPENING_OPTIONS,
-          thinking: false,
+          history: [],
+          options: [],
+          thinking: true,
+          conversationId,
         });
-        void speak(opening, scene.npc.voice, params.pace, params.temperature);
+        try {
+          const reply = await post<DialogueResponse>("/api/dialogue", {
+            bible,
+            npcIndex: scene.clueIndex,
+            history: [],
+            playerLine: null,
+            clueFound: cluesFound[scene.clueIndex],
+            exchanges: 0,
+            inventory,
+            heat,
+            conversationId,
+            avoidQuestions: storedDialogueQuestions(questionMemoryKey),
+            scene: {
+              id: scene.id,
+              title: scene.title,
+              ambient: scene.ambient,
+              kind: scene.kind,
+            },
+          });
+          rememberDialogueQuestion(questionMemoryKey, reply.line);
+          const params = voiceParams(reply.mood);
+          if (voiceOnRef.current) {
+            await fetchVoice(reply.line, scene.npc.voice, params.pace, params.temperature);
+          }
+          setDialogue({
+            npc: scene.npc,
+            history: [{ speaker: "npc", text: reply.line }],
+            options: reply.options,
+            thinking: false,
+            mood: reply.mood,
+            conversationId,
+          });
+          void speak(reply.line, scene.npc.voice, params.pace, params.temperature);
+        } catch {
+          const fallback = scene.npc.opening;
+          rememberDialogueQuestion(questionMemoryKey, fallback);
+          setDialogue({
+            npc: scene.npc,
+            history: [{ speaker: "npc", text: fallback }],
+            options: [],
+            thinking: false,
+            conversationId,
+          });
+          void speak(fallback, scene.npc.voice, 1, 0.6);
+        }
         return;
       }
 
@@ -1019,7 +1043,7 @@ export function World({ mode, gameId: routeGameId, initialIdea }: WorldProps) {
         }
       }
     },
-    [bible, ensureSceneReady, fetchVoice, prefetchInterior, premise, scene, showScene, speak, stopVoice, secondsLeft, finale, finaleLoading]
+    [bible, cluesFound, ensureSceneReady, fetchVoice, heat, inventory, prefetchInterior, premise, scene, showScene, speak, stopVoice, secondsLeft, finale, finaleLoading]
   );
 
   /** Walking off an open edge — confirm before generating; walls for visitors without a neighbor. */
@@ -1079,27 +1103,27 @@ export function World({ mode, gameId: routeGameId, initialIdea }: WorldProps) {
       const clueIndex = scene.clueIndex;
       const hasClue = typeof clueIndex === "number";
       if (!hasClue) return;
+      const questionMemoryKey = dialogueMemoryKey(gameIdRef.current, bible, clueIndex);
       try {
-        const isFirstTurn = history.filter((t) => t.speaker === "player").length === 1;
-        const cached =
-          isFirstTurn && heat < 60
-            ? dialogueCache.current.get(`${scene.id}|${line}`)
-            : undefined;
-        let reply: DialogueResponse;
-        if (cached) {
-          reply = await cached;
-        } else {
-          reply = await post<DialogueResponse>("/api/dialogue", {
-            bible,
-            npcIndex: clueIndex,
-            history: dialogue.history,
-            playerLine: line,
-            clueFound: cluesFound[clueIndex],
-            exchanges: history.filter((t) => t.speaker === "player").length,
-            inventory,
-            heat,
-          });
-        }
+        const reply = await post<DialogueResponse>("/api/dialogue", {
+          bible,
+          npcIndex: clueIndex,
+          history: dialogue.history,
+          playerLine: line,
+          clueFound: cluesFound[clueIndex],
+          exchanges: history.filter((t) => t.speaker === "player").length,
+          inventory,
+          heat,
+          conversationId: dialogue.conversationId,
+          avoidQuestions: storedDialogueQuestions(questionMemoryKey),
+          scene: {
+            id: scene.id,
+            title: scene.title,
+            ambient: scene.ambient,
+            kind: scene.kind,
+          },
+        });
+        rememberDialogueQuestion(questionMemoryKey, reply.line);
         const offense = reply.offense ?? "none";
         if (offense !== "none") {
           setHeat((v) => Math.min(100, v + OFFENSE_HEAT[offense]));
@@ -1140,6 +1164,7 @@ export function World({ mode, gameId: routeGameId, initialIdea }: WorldProps) {
           options: reply.done ? [] : reply.options,
           thinking: false,
           mood: reply.mood,
+          conversationId: dialogue.conversationId,
         });
         void speak(
           reply.line,
@@ -1151,12 +1176,12 @@ export function World({ mode, gameId: routeGameId, initialIdea }: WorldProps) {
         setDialogue({
           ...dialogue,
           history,
-          options: OPENING_OPTIONS,
+          options: [],
           thinking: false,
         });
       }
     },
-    [bible, scene, dialogue, heat, cluesFound, speak, fetchVoice, addCalls, inventory, secondsLeft, finale, finaleLoading]
+    [bible, scene, dialogue, heat, cluesFound, speak, fetchVoice, inventory, secondsLeft, finale, finaleLoading]
   );
 
   const allCluesFound = bible ? cluesFound.every(Boolean) : false;

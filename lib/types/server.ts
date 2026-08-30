@@ -16,7 +16,7 @@ import type {
 } from "./client";
 import type { Premise } from "./shared";
 import type { BoliTurnRequest } from "./client";
-import type { GameBible, SceneData } from "../universe";
+import type { DialogueTurn, GameBible, SceneData } from "../universe";
 
 /** Re-export API response shapes the server produces (single source in client). */
 export type {
@@ -111,6 +111,27 @@ export type SpriteRequest = {
   referenceFrame?: string | null;
   /** Reference frame public URL — fetched server-side when `referenceFrame` is absent. */
   referenceFrameUrl?: string | null;
+};
+
+/** POST `/api/dialogue` request body for one continuous NPC conversation. */
+export type DialogueBody = {
+  bible: GameBible;
+  /** Which bible NPC is responding. */
+  npcIndex: number;
+  history: DialogueTurn[];
+  /** Null asks the NPC to open a brand-new conversation. */
+  playerLine: string | null;
+  clueFound?: boolean;
+  exchanges?: number;
+  inventory?: string[];
+  /** Current danger-meter value, 0 through 100. */
+  heat?: number;
+  /** Fresh browser-generated nonce for this NPC approach. */
+  conversationId?: string;
+  /** Short browser memory used to steer future approaches away from old questions. */
+  avoidQuestions?: string[];
+  /** The specific place and atmosphere the player is standing in. */
+  scene?: Pick<SceneData, "id" | "title" | "ambient" | "kind">;
 };
 
 /** POST `/api/aamchi-boli/turn` request body. */
