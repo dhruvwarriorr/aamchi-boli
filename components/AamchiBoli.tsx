@@ -104,8 +104,23 @@ const WORD_BY_WORD: Record<string, MarathiWordNote[]> = {
   ],
 };
 
-function PhraseLesson({ missionId, stepIndex, phrase, compact = false }: { missionId: string; stepIndex: number; phrase: { marathi: string; transliteration: string; meaning: string }; compact?: boolean }) {
-  const notes = WORD_BY_WORD[`${missionId}:${stepIndex}`] ?? [];
+/** One glossary entry per distinct word, deduplicated across every route. */
+const MARATHI_GLOSSARY: MarathiWordNote[] = Object.values(WORD_BY_WORD)
+  .flat()
+  .filter((note, index, all) => all.findIndex((other) => other.word === note.word) === index);
+
+/**
+ * Gloss only the words the sentence on screen actually contains. Every world now
+ * runs a live Gemini conversation that mints its own target sentence, so keying
+ * the notes to a fixed step would label a phrase with another phrase's words.
+ */
+function wordNotesFor(marathi: string): MarathiWordNote[] {
+  return MARATHI_GLOSSARY.filter((note) => marathi.includes(note.word))
+    .sort((a, b) => marathi.indexOf(a.word) - marathi.indexOf(b.word));
+}
+
+function PhraseLesson({ phrase, compact = false }: { phrase: { marathi: string; transliteration: string; meaning: string }; compact?: boolean }) {
+  const notes = wordNotesFor(phrase.marathi);
   return (
     <div className={`${compact ? "mt-2" : "mt-3"} rounded-base border-2 border-black/15 bg-white/75 p-3`}>
       <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-inksoft">Learn this line</p>
@@ -346,6 +361,8 @@ export function AamchiBoli() {
   // Live sessions have no predefined endpoint; only legacy non-session routes can complete.
   const completed = Boolean(!conversationSessionId && mission && stepIndex >= mission.steps.length);
   const step = mission?.steps[Math.min(stepIndex, Math.max(mission.steps.length - 1, 0))] ?? null;
+  // Only a fixed route has a knowable total; a live session keeps growing, so the
+  // HUD reports cleared exchanges instead of a percentage that never reaches 100.
   const questProgress = mission?.steps.length ? Math.round((stepIndex / mission.steps.length) * 100) : 0;
   const learningSummary = summarizeLearning(mission, learning);
   const activeReview = reviewQueue.find((item) => item.id === reviewingItemId) ?? null;
@@ -786,15 +803,7 @@ export function AamchiBoli() {
     }
   };
 
-  const openRoutePicker = () => {
-    mapRequestRef.current += 1;
-    setSelectedMissionId(null);
-    setLoadingMap(false);
-    resetMission(false);
-    setBestMastery(null);
-    setView("choose-mission");
-  };
-
+  /** Abandon any in-flight world and land back on the route picker. */
   const returnToMissionPicker = () => {
     mapRequestRef.current += 1;
     setLoadingMap(false);
@@ -839,7 +848,7 @@ export function AamchiBoli() {
               const nextName = nameInput.trim().slice(0, 32);
               if (!nextName) return;
               setPlayerName(nextName);
-              openRoutePicker();
+              returnToMissionPicker();
             }}
           >
             <p className="text-xs font-black uppercase tracking-[0.16em] text-[#8b5b00]">Your learner</p>
@@ -1026,8 +1035,8 @@ export function AamchiBoli() {
               <p className="flex items-center gap-1 text-xs font-bold"><MapPin size={13} /> {mission.area}</p>
             </div>
             <div className="rounded-base border-2 border-black bg-main px-3 py-1.5 text-right text-black shadow-shadow">
-              <p className="text-[9px] font-bold uppercase tracking-[0.14em]">Quest</p>
-              <p className="font-display text-lg font-extrabold leading-none">{questProgress}%</p>
+              <p className="text-[9px] font-bold uppercase tracking-[0.14em]">{conversationSessionId ? "Cleared" : "Quest"}</p>
+              <p className="font-display text-lg font-extrabold leading-none">{conversationSessionId ? stepIndex : `${questProgress}%`}</p>
             </div>
             <Button
               variant="neutral"
@@ -1162,8 +1171,6 @@ export function AamchiBoli() {
                           </Button>
                         </div>
                         <PhraseLesson
-                          missionId={mission.id}
-                          stepIndex={stepIndex}
                           phrase={scenePhrase ?? {
                             marathi: step.targetPhraseMr,
                             transliteration: step.targetPhraseLatin,
@@ -1200,8 +1207,6 @@ export function AamchiBoli() {
                         <p className="mt-1 font-bold">{recentlyClearedTurn.adaptiveFeedback.whatWorked}</p>
                         {turnStepIndex !== null && (
                           <PhraseLesson
-                            missionId={mission.id}
-                            stepIndex={turnStepIndex}
                             phrase={{
                               marathi: mission.steps[turnStepIndex].targetPhraseMr,
                               transliteration: mission.steps[turnStepIndex].targetPhraseLatin,
@@ -1234,8 +1239,6 @@ export function AamchiBoli() {
                         )}
                         <p className="mt-1 font-bold">{activeTurn.adaptiveFeedback.whatWorked}</p>
                         <PhraseLesson
-                          missionId={mission.id}
-                          stepIndex={activeReview?.sourceStepIndex ?? stepIndex}
                           phrase={scenePhrase ?? {
                             marathi: conversationStep?.targetPhraseMr ?? step.targetPhraseMr,
                             transliteration: conversationStep?.targetPhraseLatin ?? step.targetPhraseLatin,

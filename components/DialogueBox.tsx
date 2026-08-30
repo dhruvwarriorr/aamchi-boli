@@ -47,23 +47,28 @@ export function DialogueBox({
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastNpcLine = [...history].reverse().find((t) => t.speaker === "npc");
+  const lastNpcText = lastNpcLine?.text;
 
   const [typed, setTyped] = useState(0);
+  const [typingLine, setTypingLine] = useState(lastNpcText);
   const prevSpeaking = useRef(false);
 
-  // Reset typewriter only when a new NPC line arrives.
-  useEffect(() => {
+  // Restart the typewriter when a new NPC line arrives. Adjusting state during
+  // render is the supported pattern here: an effect would paint the previous
+  // line's reveal length against the new text for one frame.
+  if (typingLine !== lastNpcText) {
+    setTypingLine(lastNpcText);
     setTyped(0);
-  }, [lastNpcLine?.text]);
+  }
 
   useEffect(() => {
-    if (!lastNpcLine) return;
+    if (!lastNpcText) return;
     // With voice on, wait for playback to start so text and audio feel synced.
     if (voiceOn && !speaking) return;
 
     const iv = setInterval(() => {
       setTyped((n) => {
-        if (n >= lastNpcLine.text.length) {
+        if (n >= lastNpcText.length) {
           clearInterval(iv);
           return n;
         }
@@ -71,25 +76,24 @@ export function DialogueBox({
       });
     }, 18);
     return () => clearInterval(iv);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastNpcLine?.text, voiceOn, speaking]);
+  }, [lastNpcText, voiceOn, speaking]);
 
   // Keep the full line visible after voice finishes (avoid blank flash).
   useEffect(() => {
-    if (prevSpeaking.current && !speaking && lastNpcLine) {
-      setTyped(lastNpcLine.text.length);
-    }
+    const wasSpeaking = prevSpeaking.current;
     prevSpeaking.current = speaking;
-  }, [speaking, lastNpcLine]);
+    if (!wasSpeaking || speaking || !lastNpcText) return;
+    setTyped(lastNpcText.length);
+  }, [speaking, lastNpcText]);
 
   // If TTS never starts, reveal the full line after a short wait.
   useEffect(() => {
-    if (!voiceOn || !lastNpcLine || speaking || thinking) return;
+    if (!voiceOn || !lastNpcText || speaking || thinking) return;
     const t = setTimeout(() => {
-      setTyped((n) => (n >= lastNpcLine.text.length ? n : lastNpcLine.text.length));
+      setTyped((n) => (n >= lastNpcText.length ? n : lastNpcText.length));
     }, 800);
     return () => clearTimeout(t);
-  }, [voiceOn, lastNpcLine?.text, speaking, thinking]);
+  }, [voiceOn, lastNpcText, speaking, thinking]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 99999, behavior: "smooth" });

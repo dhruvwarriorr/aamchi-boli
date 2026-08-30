@@ -115,8 +115,9 @@ export function BoliWorldCanvas({
   const hotspots = useMemo(() => mission.mapHotspots?.length ? mission.mapHotspots : [{
     id: `${mission.id}-npc`, kind: "npc" as const, name: mission.npcName,
     x: mission.npcPosition.x, y: mission.npcPosition.y, radius: 13,
-  }], [mission]);
+  }], [mission.id, mission.mapHotspots, mission.npcName, mission.npcPosition]);
   const npcHotspot = hotspots.find((hotspot) => hotspot.kind === "npc") ?? hotspots[0];
+  const hotspotsRef = useRef(hotspots);
 
   useEffect(() => {
     pausedRef.current = paused;
@@ -129,10 +130,17 @@ export function BoliWorldCanvas({
   }, [onInteract, onNearChange, onPosition]);
   useEffect(() => {
     missionRef.current = mission;
-    playerRef.current = { ...mission.playerStart, direction: "right", isMoving: false };
+    hotspotsRef.current = hotspots;
+  }, [mission, hotspots]);
+  // Only a genuinely different world sends the learner back to the spawn point.
+  // A live session appends a question to `mission.steps` after every cleared
+  // objective, and that new object must not teleport the player mid-quest.
+  useEffect(() => {
+    playerRef.current = { ...missionRef.current.playerStart, direction: "right", isMoving: false };
+    setPlayer(playerRef.current);
     nearRef.current = null;
     onNearRef.current?.(null);
-  }, [mission]);
+  }, [mission.id]);
 
   useEffect(() => {
     const checkOrientation = () => setLandscapeHint(window.innerWidth < 700 && window.innerHeight > window.innerWidth);
@@ -155,7 +163,7 @@ export function BoliWorldCanvas({
 
   const interact = useCallback(() => {
     if (pausedRef.current || completed) return;
-    const near = closestHotspot(playerRef.current, missionRef.current.mapHotspots ?? []);
+    const near = closestHotspot(playerRef.current, hotspotsRef.current);
     if (near) onInteractRef.current(near);
   }, [completed]);
 

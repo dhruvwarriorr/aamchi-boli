@@ -23,7 +23,19 @@
 
 # misc
 .DS_Store
+**/.DS_Store
+Thumbs.db
 *.pem
+
+# AI agent tooling and generated skill packs — never belongs in the repo
+.agents/
+.claude/
+.cursor/
+.cursorignore
+.hallmark/
+skills-lock.json
+CLAUDE.md
+AGENTS.md
 
 # debug
 npm-debug.log*

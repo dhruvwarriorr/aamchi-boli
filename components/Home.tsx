@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element -- finale art, scene frames, and world thumbnails arrive as data: URLs or Supabase Storage URLs, neither of which next/image can optimise. */
+
 /**
  * Gallery-forward home page: create entry, your saved worlds, and community grid.
  */
@@ -53,9 +55,12 @@ export function Home() {
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
+  /**
+   * Reload the signed-in user, their worlds, and the public gallery. Callers
+   * own the loading flag: `loading` already starts true for the first load, so
+   * this never flips state synchronously from the mount effect.
+   */
   const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
     try {
       const supabase = createClient();
       const {
@@ -72,6 +77,7 @@ export function Home() {
       ]);
       setGames(gameList);
       setCanCreate(profile.generation.canCreate);
+      setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load gallery.");
     } finally {
@@ -79,8 +85,12 @@ export function Home() {
     }
   }, []);
 
+  // Kick the first load off the commit path: every state update inside
+  // `refresh` lands after its awaits, never synchronously during mount.
   useEffect(() => {
-    refresh();
+    void (async () => {
+      await refresh();
+    })();
   }, [refresh]);
 
   const mine = userId ? games.filter((g) => g.owner === userId) : [];
@@ -114,6 +124,7 @@ export function Home() {
       }
       posthog.capture("own_world_delete_confirmed", { game_id: deleteTarget });
       setDeleteTarget(null);
+      setLoading(true);
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Delete failed.");

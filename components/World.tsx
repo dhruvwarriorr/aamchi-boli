@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element -- finale art, scene frames, and world thumbnails arrive as data: URLs or Supabase Storage URLs, neither of which next/image can optimise. */
+
 /**
  * Explorable world orchestrator: generation, persistence, load/resume, and play.
  *
@@ -282,6 +284,12 @@ export function World({ mode, gameId: routeGameId, initialIdea }: WorldProps) {
   const [phase, setPhase] = useState<WorldPhase>("booting");
   const [premise, setPremise] = useState<Premise | null>(null);
   const [scene, setScene] = useState<SceneData | null>(null);
+  /**
+   * Grid cell of the street an interior belongs to, captured when the scene
+   * is shown. The minimap needs it, and the scene map itself lives in a ref
+   * that render must not read.
+   */
+  const [parentCoord, setParentCoord] = useState<{ x: number; y: number } | null>(null);
   const [questHook, setQuestHook] = useState("");
   const [bible, setBible] = useState<GameBible | null>(null);
   const [cluesFound, setCluesFound] = useState<boolean[]>([false, false, false]);
@@ -343,9 +351,14 @@ export function World({ mode, gameId: routeGameId, initialIdea }: WorldProps) {
   /** Last announced track id, the "now playing" toast fires once per theme. */
   const musicThemeRef = useRef<string | null>(null);
   const voiceOnRef = useRef(voiceOn);
-  voiceOnRef.current = voiceOn;
   /** Fires the low-time ambient toast once per session. */
   const lowTimeWarnedRef = useRef(false);
+
+  // Narration callbacks run long after the render that produced them, so they
+  // read the live preference through a ref that is synced after every commit.
+  useEffect(() => {
+    voiceOnRef.current = voiceOn;
+  }, [voiceOn]);
 
   /**
    * Theme-aware background music (see lib/music.ts): once the world is
@@ -514,6 +527,11 @@ export function World({ mode, gameId: routeGameId, initialIdea }: WorldProps) {
     }
     scenesRef.current.set(next.id, next);
     setScene(next);
+    setParentCoord(
+      next.kind === "interior" && next.parentId
+        ? (scenesRef.current.get(next.parentId)?.coord ?? null)
+        : null
+    );
     setAmbient(next.ambient);
     setTimeout(() => setAmbient((a) => (a === next.ambient ? null : a)), 5000);
     warmSceneImages(next);
@@ -645,6 +663,7 @@ export function World({ mode, gameId: routeGameId, initialIdea }: WorldProps) {
     defeatFinalePromise.current = null;
     savedFinalesRef.current = {};
     setScene(null);
+    setParentCoord(null);
     setSprite(null);
     setDialogue(null);
     setPremise(null);
@@ -1244,12 +1263,6 @@ export function World({ mode, gameId: routeGameId, initialIdea }: WorldProps) {
     [bible, finale, finaleLoading, speak, fetchVoice, stopVoice, addCalls, saveFinale, cluesFound, genCalls, screensDreamed]
   );
 
-  useEffect(() => {
-    if (heat >= 100 && bible && !finale && !finaleLoading) {
-      const hard = bible.failStates.find((f) => f.kind === "hard");
-      runFinale("defeat", hard?.trigger ?? `the ${bible.heatLabel} meter reached 100`);
-    }
-  }, [heat, bible, finale, finaleLoading, runFinale]);
 
   /** Pause the session clock while generation/loading overlays block movement. */
   const timerPaused =
@@ -1279,12 +1292,25 @@ export function World({ mode, gameId: routeGameId, initialIdea }: WorldProps) {
     }
   }, [secondsLeft, phase]);
 
-  /** Session over — trigger defeat when the wall clock hits zero. */
+  /**
+   * Both loss conditions — a maxed suspicion meter and an expired session
+   * clock — share one defeat path. Starting the finale kicks off a fetch and
+   * flips loading flags, so it is queued instead of run inside the commit that
+   * produced the loss, which would cascade an extra render.
+   */
   useEffect(() => {
-    if (secondsLeft === 0 && bible && !finale && !finaleLoading) {
-      runFinale("defeat", "time ran out");
-    }
-  }, [secondsLeft, bible, finale, finaleLoading, runFinale]);
+    if (!bible || finale || finaleLoading) return;
+    const trigger =
+      heat >= 100
+        ? (bible.failStates.find((f) => f.kind === "hard")?.trigger ??
+          `the ${bible.heatLabel} meter reached 100`)
+        : secondsLeft === 0
+          ? "time ran out"
+          : null;
+    if (!trigger) return;
+    const id = setTimeout(() => void runFinale("defeat", trigger), 0);
+    return () => clearTimeout(id);
+  }, [heat, secondsLeft, bible, finale, finaleLoading, runFinale]);
 
   const closeDialogue = useCallback(() => {
     stopVoice();
@@ -1331,8 +1357,8 @@ export function World({ mode, gameId: routeGameId, initialIdea }: WorldProps) {
   const minimapCoord =
     scene.kind === "street" && scene.coord
       ? scene.coord
-      : scene.kind === "interior" && scene.parentId
-        ? (scenesRef.current.get(scene.parentId)?.coord ?? null)
+      : scene.kind === "interior"
+        ? parentCoord
         : null;
 
   return (

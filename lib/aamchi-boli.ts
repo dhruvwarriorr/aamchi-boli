@@ -599,11 +599,12 @@ function isMarathiAttempt(utterance: string): boolean {
   const marathiPatterns = [
     /\bnamaskar\b|नमस्कार|नमश्कार|नमसकार/,
     /\bmala\b|मला/,
-    /\bmi\b|\baahe\b|\bahe\b|\baho\b|\bho\b|\bhoy\b|\bbarobar\b|\bkuthe\b|\bithe\b|\btikade\b/,
+    /\bmi\b|\baahe\b|\bahe\b|\bahet\b|\baho\b|\bho\b|\bhoy\b|\bbarobar\b|\bkuthe\b|\bithe\b|\btikade\b/,
     /\bjaya(?:che|cha|chi)\b|\butara(?:yache|ycha|ychi)\b|\bmilel\b|\bthamb(?:a|yajaval)?\b/,
     /\bdhanyavad\b|\bmadat\b|\bshik(?:ayachi|aycha|ayche|ayla)\b|\bdis(?:at|ate|te|tat)\b/,
     /\bkara\b|\bjato\b|\bjate\b|\bjayla\b|\bcollege\s+la\b|\bbkc\s+la\b/,
-    /मी|आहे|होय|बरोबर|कुठे|इथे|तिकडे|जायचे|जायची|उतरायचे|मिळेल|थांब|धन्यवाद|मदत|शिकायची|दिसते|दिसतात|करा|जातो|जाते/,
+    /\bnahi\b|\bkay\b|\bkas(?:a|hi|e)\b|\btumhi\b|\btumche\b|\bmaz(?:he|ha|hi)\b|\bpahije\b|\bkhup\b|\bchhan\b|\bchan\b|\bnako\b/,
+    /मी|आहे|आहेत|होय|बरोबर|कुठे|इथे|तिकडे|जायचे|जायची|उतरायचे|मिळेल|थांब|धन्यवाद|मदत|शिकायची|दिसते|दिसतात|करा|जातो|जाते|नाही|काय|कसा|कशी|तुम्ही|माझे|पाहिजे|खूप|छान|नको/,
   ];
   const hindiPatterns = [
     /\bmujhe\b|\bmain\b|\bjaana\b|\bjana\b|\bkahan\b|\bshukriya\b|\bseekhna\b|\bdikh(?:ta|ti|te)\b/,
@@ -611,7 +612,12 @@ function isMarathiAttempt(utterance: string): boolean {
   ];
   const marathiScore = marathiPatterns.filter((pattern) => pattern.test(text)).length;
   const hindiScore = hindiPatterns.filter((pattern) => pattern.test(text)).length;
-  return marathiScore > 0 && marathiScore >= hindiScore;
+  if (marathiScore > 0) return marathiScore >= hindiScore;
+  // Live sessions mint their own targets, so no keyword list can enumerate every
+  // valid answer. Devanagari production carrying no Hindi marker still counts as
+  // a Marathi attempt; without this a correct reply built from vocabulary
+  // outside the list could never clear an objective.
+  return hindiScore === 0 && /[\u0900-\u097F]/.test(text);
 }
 
 function safeSkills(value: unknown, currentSkill: BoliSkillId): BoliSkillId[] {
@@ -840,7 +846,13 @@ export async function evaluateBoliTurn(body: BoliTurnBody): Promise<BoliTurnResp
       ? "partial"
       : modelOutcome;
   const didAdvance = outcome === "success" && mode === "mission";
-  const nextStep = didAdvance ? Math.min(stepIndex + 1, mission.steps.length) : body.stepIndex;
+  // Never echo an unclamped client index back: a review turn keeps the learner
+  // where the mission actually is, and a mission turn holds the current step.
+  const nextStep = didAdvance
+    ? Math.min(stepIndex + 1, mission.steps.length)
+    : mode === "review"
+      ? Math.min(Math.max(0, body.stepIndex), mission.steps.length)
+      : stepIndex;
   const completed = !session && didAdvance && nextStep === mission.steps.length;
   const sessionMemory = session
     ? session.turns.slice(-6).join("\n")

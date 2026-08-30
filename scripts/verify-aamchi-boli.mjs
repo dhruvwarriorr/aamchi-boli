@@ -10,7 +10,7 @@
  * shipped scoring guardrails and coaching response, not a local mock.
  */
 
-const baseUrl = (process.env.AAMCHI_BOLI_URL || "http://localhost:3010").replace(/\/$/, "");
+const baseUrl = (process.env.AAMCHI_BOLI_URL || "http://localhost:3000").replace(/\/$/, "");
 const variant = process.env.AAMCHI_VARIANT || "all";
 
 const variants = {
